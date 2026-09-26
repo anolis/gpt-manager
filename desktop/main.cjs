@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const readline = require('node:readline');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -30,6 +30,7 @@ async function selectDirectory(title) {
   return result.canceled ? null : result.filePaths[0];
 }
 app.whenReady().then(async () => {
+  if (process.argv.includes('--platform-smoke-test')) setTimeout(() => { console.error('Platform smoke exceeded one minute'); app.exit(1); }, 60000).unref();
   if (process.argv.includes('--smoke-test')) {
     const fixture = process.env.GPT_MANAGER_HOME;
     if (!fixture || !process.env.GPT_MANAGER_DATA || !fs.existsSync(path.join(fixture, '.gpt-manager-smoke-fixture')) || process.env.PATH.split(path.delimiter)[0] !== path.join(fixture, 'bin')) {
@@ -44,6 +45,7 @@ app.whenReady().then(async () => {
   const backend = require('./runtime.cjs').backendCommand('rpc', app);
   worker = spawn(backend.command, [...backend.args, '--data', data, ...(process.env.GPT_MANAGER_HOME ? ['--home', process.env.GPT_MANAGER_HOME] : [])], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   worker.on('error', error => {
+    if (process.argv.includes('--platform-smoke-test')) { console.error(error); app.exit(1); return; }
     dialog.showErrorBox('Backend could not start', `Install Python 3.10 or newer, or set GPT_MANAGER_PYTHON.\n\n${error.message}`);
     app.quit();
   });
@@ -281,4 +283,7 @@ app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => app.quit());
-app.on('quit', () => worker?.kill());
+app.on('quit', () => {
+  if (process.platform === 'win32' && worker?.pid && worker.exitCode === null) spawnSync('taskkill', ['/PID', String(worker.pid), '/T', '/F'], { windowsHide: true, timeout: 5000, stdio: 'ignore' });
+  else worker?.kill();
+});

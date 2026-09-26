@@ -42,7 +42,7 @@ class ProviderTests(unittest.TestCase):
         folder = self.setup.root / 'fixture'; binary = self.package(folder)
         result = self.setup.package_command(folder, 'codex')
         self.assertEqual(result[1], str(binary.resolve()))
-        self.assertEqual(Path(result[0]).name, 'node.exe' if os.name == 'nt' else 'node')
+        self.assertEqual(Path(result[0]).name.lower(), 'node.exe' if os.name == 'nt' else 'node')
     def test_package_entry_cannot_escape_install(self):
         folder = self.setup.root / 'fixture'; self.package(folder, entry='../../../../outside.js')
         with self.assertRaises(ValueError): self.setup.package_command(folder, 'codex')

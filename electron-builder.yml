@@ -5,6 +5,7 @@ files:
   - desktop/**
   - ui/**
   - package.json
+  - LICENSE
 extraResources:
   - from: build/backend/gpt-manager-backend
     to: backend
