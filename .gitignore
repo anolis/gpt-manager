@@ -1,0 +1,11 @@
+node_modules/
+__pycache__/
+*.pyc
+.test-output/
+*.gptctx
+.env
+.env.*
+!.env.example
+*.log
+core
+core.*

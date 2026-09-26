@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css"><title>GPT Manager</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><span class="brand-icon">g<span>_</span></span><div>GPT Manager<small>YOUR CONTEXT, EVERYWHERE</small></div></div>
+  <div class="workspace"><span class="status-dot"></span> Local workspace <span class="local-label">PRIVATE</span></div>
+  <div class="nav-label">LIBRARY</div>
+  <nav id="navigation">
+    <button class="nav active" data-view="all"><span>▦</span> All contexts <b id="nav-total">0</b></button>
+    <button class="nav" data-view="starred"><span>☆</span> Starred</button>
+    <button class="nav" data-view="imported"><span>⇥</span> Imported</button>
+    <button class="nav" data-view="archived"><span>▣</span> Archived</button>
+    <div class="nav-label">WORKSPACE</div>
+    <button class="nav" data-view="locations"><span>⌘</span> Context locations</button>
+    <button class="nav" data-view="transfer"><span>⇄</span> Backup & teleport</button>
+  </nav>
+  <div class="sidebar-bottom"><div class="local-indicator"><span class="status-dot"></span> On-device storage</div><p>Your conversations stay on this machine until you export them.</p><div class="version">GPT MANAGER <span>v0.1.0</span></div></div>
+</aside>
+<main>
+  <header><div class="breadcrumb">Workspace <span>/</span> <strong id="crumb">All contexts</strong></div><div><button class="quiet" id="terminal-reopen">▤ &nbsp; Terminals</button><button class="quiet" id="refresh">↻ &nbsp; Refresh</button></div></header>
+  <section class="page-heading"><div><div class="eyebrow">A HOME FOR YOUR AI WORK</div><h1 id="page-title">All contexts</h1><p id="page-description">Pick up the thread. Every conversation, in one place.</p></div><div class="heading-actions"><button id="import-button" class="button">⇥ &nbsp; Import</button><button id="export-button" class="button primary">↗ &nbsp; Export selected <span id="selected-count">0</span></button></div></section>
+  <section id="stats" class="stats"></section>
+  <section id="library-view">
+    <div class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="Search titles, projects, tags, or session IDs…" aria-label="Search contexts"><kbd>Ctrl K</kbd></label><select id="sort" aria-label="Sort contexts"><option value="recent">Recently updated</option><option value="oldest">Oldest first</option><option value="size">Largest first</option><option value="title">Title A–Z</option></select></div>
+    <div class="filter-line"><div id="provider-filters" class="pills"></div><span id="result-count"></span></div>
+    <div class="library-split"><section class="context-list"><div class="list-header"><label><input type="checkbox" id="select-all" aria-label="Select all filtered contexts"> CONTEXT</label><span>LAST ACTIVE</span></div><div id="context-rows"><div class="empty">Discovering your local contexts…</div></div></section><aside id="inspector" class="inspector"><div class="inspector-empty"><div class="large-symbol">⌘</div><h2>A little more context.</h2><p>Select a conversation to explore its messages, original files, and metadata.</p><span>READ · ORGANIZE · TAKE IT WITH YOU</span></div></aside></div>
+  </section>
+  <section id="locations-view" class="hidden"></section>
+  <section id="transfer-view" class="hidden"></section>
+  <footer><span id="status">Reading provider stores…</span><span>LOCAL FIRST <span class="status-dot"></span></span></footer>
+</main>
+<dialog id="import-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><div class="eyebrow">PORTABLE CONTEXT ARCHIVE</div><h2>Bring your contexts home.</h2><p>The archive has passed file and checksum validation. Import adds a separate copy to this manager’s library.</p><div id="import-preview"></div><p class="muted">Provider stores are only changed when you explicitly restore original files from an imported context.</p><div class="dialog-actions"><button class="button primary" id="confirm-import">Import to library</button></div></dialog>
+<div id="toast" role="status" class="hidden"></div>
+<section id="terminal-dock" class="hidden"><div class="terminal-bar"><div id="terminal-tabs"></div><div><button id="terminal-hide" class="quiet" aria-label="Hide terminals">—</button><button id="terminal-close" class="quiet" aria-label="Stop and close active terminal">×</button></div></div><div id="terminal-content"></div></section>
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script><script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="app.js"></script>
+</body></html>

@@ -1,0 +1,27 @@
+{
+  "name": "gpt-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local desktop library for AI contexts",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_commands.cjs",
+    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/terminals.cjs && node --check ui/app.js && python3 -m compileall -q backend"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anolis/gpt-manager.git"
+  }
+}
