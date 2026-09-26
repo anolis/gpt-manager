@@ -176,6 +176,11 @@ app.whenReady().then(async () => {
         cloudSignIn('icloud');
         if (!document.querySelector('#apple-email') || !document.querySelector('#apple-password')) throw new Error('Apple sign-in form missing');
         document.querySelector('#cloud-dialog').close();
+        cloudProgress('Downloading cloud connector…', { received: 1048576, total: 2097152 });
+        if (document.querySelector('.setup-progress').value !== 50 || !document.querySelector('.setup-download').textContent.includes('50%')) throw new Error('Download progress missing');
+        const cancelButton = document.querySelector('#cloud-dialog-body button');
+        cloudProgress('Verifying cloud connector download…');
+        if (document.querySelector('.setup-progress').hasAttribute('value') || document.querySelector('#cloud-dialog-body button') !== cancelButton) throw new Error('Setup stage transition failed');
         document.querySelector('[data-view="all"]').click();
         const codex = state.library.contexts.find(c => c.provider === 'codex');
         await selectContext(codex.id);

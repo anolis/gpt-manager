@@ -38,7 +38,7 @@ ARCHIVE_NAME = re.compile(r'^[a-f0-9]{32}-[a-f0-9]{32}\.gptctx$')
 
 class Connector:
     """Pinned official rclone, authenticated on an ephemeral loopback port."""
-    def __init__(self, directory):
+    def __init__(self, directory, progress=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.directory.chmod(0o700)
@@ -48,6 +48,7 @@ class Connector:
         self.password = secrets.token_urlsafe(32)
         self.ready = threading.Event()
         self.process_lock = threading.RLock()
+        self.progress = progress or (lambda message, progress=None: None)
 
     def binary(self):
         override = os.environ.get('GPT_MANAGER_RCLONE')
@@ -69,12 +70,16 @@ class Connector:
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=target.parent) as temp:
             package = Path(temp) / 'connector.zip'
-            self.download(base + filename, package, 160 * 1024**2)
+            self.progress('Downloading cloud connector — first-time setup…', {'received': 0, 'total': None})
+            self.download(base + filename, package, 160 * 1024**2,
+                          lambda received, total: self.progress('Downloading cloud connector — first-time setup…', {'received': received, 'total': total}))
+            self.progress('Verifying cloud connector download…')
             sums = Path(temp) / 'SHA256SUMS'
             self.download(base + 'SHA256SUMS', sums, 1024**2)
             expected = next((line.split()[0] for line in sums.read_text().splitlines() if len(line.split()) == 2 and line.split()[-1].lstrip('*') == filename), None)
             if not expected or digest(package) != expected:
                 raise ValueError('Cloud connector download failed checksum verification')
+            self.progress('Installing cloud connector…')
             with zipfile.ZipFile(package) as archive:
                 prefix = filename[:-4] + '/'
                 executable = Path(temp) / name
@@ -85,20 +90,27 @@ class Connector:
         return target
 
     @staticmethod
-    def download(url, target, limit):
+    def download(url, target, limit, progress=None):
         with urllib.request.urlopen(url, timeout=60) as response, target.open('xb') as out:
+            length = response.headers.get('Content-Length', '')
+            total = int(length) if length.isdigit() and 0 < int(length) <= limit else None
             size = 0
+            if progress:
+                progress(size, total)
             while chunk := response.read(1024 * 1024):
                 size += len(chunk)
                 if size > limit:
                     raise ValueError('Download exceeded the permitted size')
                 out.write(chunk)
+                if progress:
+                    progress(size, total if total is None or size <= total else None)
 
     def start(self):
         with self.process_lock:
             if self.process and self.process.poll() is None:
                 return
             executable = self.binary()
+            self.progress('Starting cloud connector…')
             self.ready.clear()
             self.url = None
             self.config.touch(mode=0o600, exist_ok=True)
@@ -120,6 +132,7 @@ class Connector:
             if not self.ready.wait(15) or not self.url:
                 self.close()
                 raise ValueError('The cloud connector could not start its private localhost service')
+            self.progress('Preparing account sign-in…')
 
     def call(self, method, params):
         if method not in ('config/create', 'config/update', 'config/delete', 'operations/list', 'operations/mkdir', 'operations/copyfile', 'operations/movefile'):
@@ -163,7 +176,7 @@ class CloudSync:
         self.directory.chmod(0o700)
         self.file = self.directory / 'sync.json'
         self.state = read_json(self.file, {'device': uuid.uuid4().hex, 'targets': [], 'received': {}})
-        self.connector = connector or Connector(self.directory)
+        self.connector = connector or Connector(self.directory, self._message)
         self.job = None
         self.pending = None
         self.stopping = False
@@ -242,10 +255,11 @@ class CloudSync:
             return self._advance(connection, result)
         return self._launch('Connecting ' + CLOUDS[provider][0], begin)
 
-    def _message(self, message):
+    def _message(self, message, progress=None):
         with self.lock:
             if self.job:
                 self.job['message'] = message
+                self.job['progress'] = progress
 
     def _advance(self, connection, result):
         for _ in range(15):

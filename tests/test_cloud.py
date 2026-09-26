@@ -174,7 +174,7 @@ class CloudTests(unittest.TestCase):
             z.writestr('rclone-v1.75.1-linux-amd64/rclone', 'fixture-executable')
             z.writestr('rclone-v1.75.1-linux-amd64/README.txt', 'MIT license fixture')
         checksum = hashlib.sha256(package.read_bytes()).hexdigest()
-        def download(url, target, limit):
+        def download(url, target, limit, progress=None):
             if url.endswith('SHA256SUMS'):
                 target.write_text('-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA1\n\n' + checksum + '  rclone-v1.75.1-linux-amd64.zip\n')
             else: shutil.copyfile(package, target)
@@ -182,8 +182,30 @@ class CloudTests(unittest.TestCase):
         with patch.object(connector, 'download', side_effect=download), patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
             self.assertEqual(connector.binary().read_text(), 'fixture-executable')
 
+    def test_download_reports_bytes_with_and_without_content_length(self):
+        import io
+        data = b'x' * (1024 * 1024 + 37)
+        for length in (str(len(data)), None):
+            response = io.BytesIO(data)
+            response.headers = {'Content-Length': length} if length else {}
+            updates = []
+            destination = self.root / ('download-' + str(length))
+            with patch('urllib.request.urlopen', return_value=response):
+                Connector.download('https://example.invalid/connector', destination, len(data),
+                                   lambda received, total: updates.append((received, total)))
+            self.assertEqual(destination.read_bytes(), data)
+            self.assertEqual([item[0] for item in updates], [0, 1024 * 1024, len(data)])
+            self.assertEqual(updates[-1][1], len(data) if length else None)
+
+    def test_setup_stage_clears_download_progress(self):
+        self.cloud.job = {'status': 'running'}
+        self.cloud._message('Downloading', {'received': 10, 'total': 20})
+        self.assertEqual(self.cloud.status()['job']['progress']['received'], 10)
+        self.cloud._message('Verifying')
+        self.assertIsNone(self.cloud.status()['job']['progress'])
+
     def test_installer_rejects_tampered_binary(self):
-        def download(url, target, limit):
+        def download(url, target, limit, progress=None):
             target.write_text('wrong bytes' if url.endswith('.zip') else '0' * 64 + '  rclone-v1.75.1-linux-amd64.zip\n')
         connector = Connector(self.root / 'bad-installer')
         with patch.object(connector, 'download', side_effect=download), patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):

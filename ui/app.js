@@ -231,7 +231,7 @@ function acceptCloud(value) {
   const job = value.job;
   if (!job) return;
   if (job.status === 'running') {
-    if ($('#cloud-dialog').open && !$('#cloud-dialog-body input')) cloudProgress(job.message);
+    if ($('#cloud-dialog').open && !$('#cloud-dialog-body input')) cloudProgress(job.message, job.progress);
     return;
   }
   if (cloudSeenJob === job.id) return;
@@ -250,8 +250,23 @@ function acceptCloud(value) {
     if (job.result.warnings?.length) toast(job.result.warnings[0], true);
   }
 }
-function cloudProgress(message) {
-  const body = $('#cloud-dialog-body'); body.replaceChildren(element('div', 'eyebrow', 'CONNECT YOUR CLOUD'), element('h2', '', 'A moment, please.'), element('p', '', message), button('Cancel sign-in', 'button', async () => { acceptCloud(await api.cloudCancel()); $('#cloud-dialog').close(); }));
+function cloudProgress(message, progress) {
+  const body = $('#cloud-dialog-body');
+  if (!body.querySelector('.setup-progress')) {
+    const meter = element('progress', 'setup-progress'); meter.max = 100; meter.setAttribute('aria-label', 'Cloud connector setup');
+    const status = element('p', 'setup-status'); status.setAttribute('role', 'status');
+    body.replaceChildren(element('div', 'eyebrow', 'CONNECT YOUR CLOUD'), element('h2', '', 'Getting connected.'), status, meter, element('p', 'setup-download'), button('Cancel sign-in', 'button', async () => { acceptCloud(await api.cloudCancel()); $('#cloud-dialog').close(); }));
+  }
+  body.querySelector('.setup-status').textContent = message;
+  const meter = body.querySelector('.setup-progress'), detail = body.querySelector('.setup-download');
+  if (progress?.total > 0) {
+    const percent = Math.min(100, Math.floor(progress.received / progress.total * 100));
+    meter.value = percent;
+    detail.textContent = `${percent}% · ${(progress.received / 1048576).toFixed(1)} of ${(progress.total / 1048576).toFixed(1)} MB downloaded`;
+  } else {
+    meter.removeAttribute('value');
+    detail.textContent = progress ? `${(progress.received / 1048576).toFixed(1)} MB downloaded · total size unavailable` : '';
+  }
 }
 function cloudSignIn(provider) {
   const dialog = $('#cloud-dialog'), body = $('#cloud-dialog-body'); body.replaceChildren();
