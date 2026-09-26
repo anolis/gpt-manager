@@ -187,7 +187,9 @@ let cloudSeenJob = null, cloudPolling = false;
 const cloudNames = { google: 'Google Drive', onedrive: 'OneDrive', icloud: 'iCloud Drive' };
 function cloudBusy() { return cloudState.job?.status === 'running'; }
 function renderCloud() {
-  const page = $('#cloud-view'); page.replaceChildren();
+  const page = $('#cloud-view');
+  const maintainerOpen = page.querySelector('.maintainer-setup')?.open || false;
+  page.replaceChildren();
   const intro = element('div', 'notice', 'Connect directly, or use a folder synced by another app. Only contexts you choose are uploaded. Incoming snapshots are verified and added to Imported; live provider files are never replaced.'); page.append(intro);
   const cards = element('div', 'cloud-cards');
   for (const [id, name] of Object.entries(cloudNames)) {
@@ -221,6 +223,7 @@ function renderCloud() {
   }
   page.append(element('p', 'muted', 'Sync keeps versioned archives; it does not merge live chats or propagate deletions. Archives are not encrypted by GPT Manager. Your cloud provider controls their storage. Folder connections rely on your sync app to finish uploading.'));
   const setup = element('details', 'maintainer-setup'); setup.append(element('summary', '', 'Maintainer setup · Google sign-in'), element('p', '', 'Import the OAuth Desktop app JSON for GPT Manager once. Releases can ship the app registration so users only need to sign in. Google’s shared connector credentials are being retired; this build does not rely on them.'));
+  setup.open = maintainerOpen;
   setup.append(button('Import Google OAuth app JSON', 'button', async () => { const result = await api.cloudGoogleConfig(); if (result) { acceptCloud(result); toast('Google app registration configured. Users can now connect their account.'); } })); page.append(setup);
 }
 function acceptCloud(value) {

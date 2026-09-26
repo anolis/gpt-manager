@@ -167,6 +167,12 @@ app.whenReady().then(async () => {
         document.querySelector('#search').dispatchEvent(new Event('input'));
         document.querySelector('[data-view="cloud"]').click();
         if (document.querySelectorAll('.cloud-card').length !== 3) throw new Error('Cloud provider cards missing');
+        document.querySelector('.maintainer-setup summary').click();
+        await delay(2200);
+        if (!document.querySelector('.maintainer-setup').open) throw new Error('Cloud polling closed maintainer setup');
+        document.querySelector('.maintainer-setup summary').click();
+        await delay(1200);
+        if (document.querySelector('.maintainer-setup').open) throw new Error('Cloud polling reopened maintainer setup');
         cloudSignIn('icloud');
         if (!document.querySelector('#apple-email') || !document.querySelector('#apple-password')) throw new Error('Apple sign-in form missing');
         document.querySelector('#cloud-dialog').close();
