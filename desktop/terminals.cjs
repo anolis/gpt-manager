@@ -31,12 +31,13 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
     const context = (await rpc('library')).contexts.find(c => c.id === id);
     if (!context) throw new Error('Context not available');
     const command = resumeCommand(context);
-    let cwd = folders.get(id) || context.project;
+    let cwd = context.project || folders.get(id);
     if (!cwd || !path.isAbsolute(cwd) || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
       cwd = await selectDirectory('Choose the project folder for this conversation');
       if (!cwd) return null;
       folders.set(id, cwd);
     }
+    if (context.provider === 'codex') command.args.push('--cd', cwd);
     return { ...command, cwd };
   }
   function emit(session, channel, value) {
@@ -86,5 +87,6 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
   });
   app.on('before-quit', () => { if (quitting || ![...sessions.values()].some(s => !s.exited)) for (const s of sessions.values()) s.child.kill(); });
   app.on('quit', () => { for (const s of sessions.values()) s.child.kill(); });
+  return { isRunning: id => [...sessions.values()].some(s => s.id === id && !s.exited) };
 }
 module.exports = { installTerminals, resumeCommand };

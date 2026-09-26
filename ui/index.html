@@ -17,9 +17,10 @@
     <button class="nav" data-view="archived"><span>▣</span> Archived</button>
     <div class="nav-label">WORKSPACE</div>
     <button class="nav" data-view="locations"><span>⌘</span> Context locations</button>
+    <button class="nav" data-view="cloud"><span>☁</span> Cloud sync</button>
     <button class="nav" data-view="transfer"><span>⇄</span> Backup & teleport</button>
   </nav>
-  <div class="sidebar-bottom"><div class="local-indicator"><span class="status-dot"></span> On-device storage</div><p>Your conversations stay on this machine until you export them.</p><div class="version">GPT MANAGER <span>v0.1.0</span></div></div>
+  <div class="sidebar-bottom"><div class="local-indicator"><span class="status-dot"></span> On-device storage</div><p>Conversations stay local until you export or choose to sync them.</p><div class="version">GPT MANAGER <span>v0.2.0</span></div></div>
 </aside>
 <main>
   <header><div class="breadcrumb">Workspace <span>/</span> <strong id="crumb">All contexts</strong></div><div><button class="quiet" id="terminal-reopen">▤ &nbsp; Terminals</button><button class="quiet" id="refresh">↻ &nbsp; Refresh</button></div></header>
@@ -31,10 +32,12 @@
     <div class="library-split"><section class="context-list"><div class="list-header"><label><input type="checkbox" id="select-all" aria-label="Select all filtered contexts"> CONTEXT</label><span>LAST ACTIVE</span></div><div id="context-rows"><div class="empty">Discovering your local contexts…</div></div></section><aside id="inspector" class="inspector"><div class="inspector-empty"><div class="large-symbol">⌘</div><h2>A little more context.</h2><p>Select a conversation to explore its messages, original files, and metadata.</p><span>READ · ORGANIZE · TAKE IT WITH YOU</span></div></aside></div>
   </section>
   <section id="locations-view" class="hidden"></section>
+  <section id="cloud-view" class="hidden"></section>
   <section id="transfer-view" class="hidden"></section>
   <footer><span id="status">Reading provider stores…</span><span>LOCAL FIRST <span class="status-dot"></span></span></footer>
 </main>
 <dialog id="import-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><div class="eyebrow">PORTABLE CONTEXT ARCHIVE</div><h2>Bring your contexts home.</h2><p>The archive has passed file and checksum validation. Import adds a separate copy to this manager’s library.</p><div id="import-preview"></div><p class="muted">Provider stores are only changed when you explicitly restore original files from an imported context.</p><div class="dialog-actions"><button class="button primary" id="confirm-import">Import to library</button></div></dialog>
+<dialog id="cloud-dialog"><div id="cloud-dialog-body"></div></dialog>
 <div id="toast" role="status" class="hidden"></div>
 <section id="terminal-dock" class="hidden"><div class="terminal-bar"><div id="terminal-tabs"></div><div><button id="terminal-hide" class="quiet" aria-label="Hide terminals">—</button><button id="terminal-close" class="quiet" aria-label="Stop and close active terminal">×</button></div></div><div id="terminal-content"></div></section>
 <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script><script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script><script src="app.js"></script>

@@ -1,5 +1,7 @@
 # GPT Manager
 
+[Project website](https://anolis.github.io/gpt-manager/) · [Cloud setup](#cloud-sync) · [Moving contexts](#moving-contexts)
+
 A local desktop library for Codex, Claude Code, Gemini CLI, and Antigravity / agy conversations. Browse provider stores, inspect transcripts and original files, organize contexts, resume a conversation in a terminal, and carry contexts between machines.
 
 ![GPT Manager with synthetic demonstration contexts](docs/desktop.png)
@@ -20,7 +22,7 @@ If your npm configuration disables install scripts, download Electron's runtime 
 node node_modules/electron/install.js
 ```
 
-Provider CLIs must be installed, authenticated, and on the launching shell's PATH. GPT Manager uses their existing installations and approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. The app opens no HTTP server, loads no remote UI, and sends no chats to a service. Resuming a provider uses that provider's normal network behavior.
+Provider CLIs must be installed, authenticated, and on the launching shell's PATH. GPT Manager uses their existing installations and approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. Browsing uses no network service and loads no remote UI. Cloud sync is opt-in: the connector runs an authenticated service on an ephemeral localhost port and sends only selected context archives to your chosen cloud. Provider sign-in can briefly use an OAuth callback port. Resuming a provider uses that provider's normal network behavior.
 
 ## What works
 
@@ -32,6 +34,8 @@ Provider CLIs must be installed, authenticated, and on the launching shell's PAT
 - **Terminal**: opens a Linux system terminal in the recorded project directory with the specific conversation resumed. Missing project directories trigger a folder picker.
 - Portable `.gptctx` archives containing original context files, a versioned manifest, SHA-256 checksums, and manager annotations.
 - Archive validation and preview, import into an isolated library, and explicit conflict-safe restoration of original files.
+- Cloud account connections, optional synced-folder connections, manual sync, and opt-in automatic snapshot sync.
+- Project-folder remapping and original-context-file moves with a recovery archive and conflict checks.
 
 ### Discovery and resume adapters
 
@@ -61,10 +65,48 @@ Archives are **not encrypted** and contain private conversations and potentially
 
 A native provider may need its index rebuilt or a matching project checkout before it can resume a restored session. Original project paths are preserved, not rewritten. In particular, Antigravity has shared summary/index state beyond the per-conversation database. **Archive round-trips and file restoration are tested; seamless native resume after migration is not guaranteed.** Backup whole provider installations separately when you need complete application-state disaster recovery.
 
+## Cloud sync
+
+![Cloud account and optional folder connections](docs/cloud-sync.png)
+
+Open **Cloud sync** in the sidebar. Direct account sign-in is the primary path; **Use a synced folder instead** is available for each provider. No separate cloud desktop client or manual connector installation is required for direct connections: the first connection downloads pinned rclone v1.75.1 from its official HTTPS distribution and verifies its published SHA-256 checksum.
+
+| Provider | Direct connection | Folder option |
+| --- | --- | --- |
+| Google Drive | Browser OAuth once the maintainer supplies GPT Manager’s OAuth registration; disabled until configured | Available now |
+| OneDrive | Browser OAuth through rclone; select a drive if asked | Available now |
+| iCloud Drive | Apple Account/password and two-factor challenge through rclone | Available now |
+
+The connection flow and transfer engine are implemented. Automated tests cover the sign-in state machine and actual rclone transport against local-only remotes. **Live Google/Microsoft/Apple account authentication has not been verified in this environment.** Provider consent screens may identify the connector as rclone. iCloud uses its connector’s web authentication protocol, not Sign in with Apple. It requires the regular account password and web access to iCloud; trusted-device approval may be necessary, and sessions eventually need reauthentication. See [rclone’s iCloud documentation](https://rclone.org/iclouddrive/).
+
+Connecting an account does **not** upload your library. Select contexts in the library, then choose **Use library selection** on the connection, or explicitly enable **Back up all unarchived local contexts**. Choose **Sync now** or opt into a 15-minute schedule while the manager is open. With no upload selection, a connection receives snapshots only.
+
+Sync writes immutable `.gptctx` snapshots under `GPT Manager/v1`. Changed contexts and annotations create new snapshots; unchanged contexts are skipped. Incoming snapshots are validated and added to the imported library. Partial uploads are ignored, received archives are deduplicated, and no deletions or live provider-file changes are propagated. There is no transcript merge or automatic retention pruning. Old versions consume cloud storage until you remove them yourself. Folder mode can confirm a local write, but cannot confirm that your separate sync client finished uploading.
+
+### One-time Google setup for maintainers
+
+Google users should only have to sign in. This release cannot provide that experience until **GPT Manager has its own OAuth app registration**: rclone’s shared Google credentials are being retired in 2026. The application deliberately does not rely on those shared credentials. See the [official connector requirements](https://rclone.org/drive/#making-your-own-client-id).
+
+1. In a Google Cloud project, enable the Drive API and configure the OAuth consent screen for GPT Manager.
+2. Create an **OAuth Desktop app** client and download its JSON. Configure test users or publish the consent screen as appropriate for the intended audience.
+3. In **Cloud sync → Maintainer setup**, import that JSON. Endpoint URLs in the JSON are ignored; the connector uses its built-in provider endpoints. GPT Manager requests the `drive.file` scope.
+4. For a distributed build, supply `cloud-oauth.json` beside `package.json`, using the layout in [cloud-oauth.example.json](cloud-oauth.example.json). Normal users of that build will see an enabled Google connect button. Keep registration management with the maintainer.
+
+Cloud credentials are stored in `<manager data>/cloud/accounts.conf` in an owner-only directory, with owner-only file permissions on POSIX. rclone obscures password fields; **this is not OS-keychain encryption**. OAuth configuration and account credentials are never included in context archives. Disconnect removes this manager’s local account configuration, not cloud snapshots or provider-side consent; revoke consent in the provider account if needed. Cloud archives themselves are not encrypted by GPT Manager.
+
+## Moving contexts
+
+Select a conversation and open **Details & notes → Move to another folder**.
+
+- **Change project folder** changes the directory GPT Manager uses when launching the CLI. Codex receives an explicit `--cd` argument. It does not move your source repository, rewrite historical text, or update provider project indexes. Providers may retain paths in conversation memory; Gemini’s project-scoped session lookup may need its history placed in the appropriate provider bucket before it can resume from a different project.
+- **Move original files** selects a new *provider store root*, preserving the provider’s relative layout. The app previews source/destination roots, creates a recovery `.gptctx` archive, checks conflicts, copies and verifies the bytes, then removes the original files. It carries over notes/tags/stars, registers the destination location, and updates cloud selections. A failed source removal attempts rollback; the recovery archive is retained under `<manager data>/move-backups`.
+
+Close the conversation in external provider apps before moving files. Running embedded terminals block both actions; SQLite databases with WAL files cannot be moved until closed/checkpointed (Export remains available for snapshots). Moves do not transfer authentication, shared provider indexes, or project source files, and do not automatically enable native resume from a new store. Imported contexts use **Restore files** instead of moving the manager’s internal library copies.
+
 ## Implementation
 
 - Electron desktop shell with a sandboxed, local-only renderer.
-- Python standard-library backend over private stdin/stdout RPC; no listening port.
+- Python standard-library backend over private stdin/stdout RPC. Opt-in cloud operations use a separate authenticated, loopback-only rclone process.
 - POSIX PTY subprocess bridge and xterm.js for embedded CLI interaction.
 - Manager metadata and imported archives in Electron's user-data directory (`~/.config/gpt-manager` on typical Linux installations). The Locations screen shows the actual path.
 - Override `GPT_MANAGER_HOME` and `GPT_MANAGER_DATA` for isolated fixtures or alternate environments. `CODEX_HOME` / `CLAUDE_CONFIG_DIR` still take precedence over home defaults.
@@ -77,6 +119,8 @@ Embedded terminals work through POSIX PTYs (Linux/macOS); external terminal laun
 npm run check
 npm test
 ```
+
+The tests also cover two-manager cloud sync, deduplication, automatic-sync opt-in, rejected archives, installer checksums, sign-in response redaction, folder remapping, move recovery, and rollback. A separate `tests/cloud_connector_smoke.py` exercises actual rclone RPC with local-only remotes.
 
 The tests cover provider parsing, annotation persistence, original-byte export/import/restore, conflict refusal, checksum tampering, path traversal, symlinks, undeclared files, SQLite WAL snapshots, pagination, and real PTY input/resize/exit. Resume-command tests verify provider arguments and reject invalid session IDs.
 

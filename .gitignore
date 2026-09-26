@@ -9,3 +9,6 @@ __pycache__/
 *.log
 core
 core.*
+/cloud-oauth.json
+client_secret*.json
+accounts.conf

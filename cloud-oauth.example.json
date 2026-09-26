@@ -1,0 +1,6 @@
+{
+  "google": {
+    "client_id": "YOUR_DESKTOP_APP_ID.apps.googleusercontent.com",
+    "client_secret": "YOUR_DESKTOP_APP_CLIENT_SECRET"
+  }
+}

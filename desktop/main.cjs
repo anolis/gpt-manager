@@ -107,11 +107,43 @@ app.whenReady().then(async () => {
     if (!item) throw new Error('Context unavailable');
     shell.showItemInFolder(item.path);
   });
+  for (const [name, method] of Object.entries({ cloudStatus: 'status', cloudConnect: 'connect', cloudAnswer: 'answer', cloudCancel: 'cancel', cloudConfigure: 'configure', cloudSync: 'sync', cloudTick: 'tick' })) {
+    register(name, params => rpc('cloud_' + method, params));
+  }
+  register('cloudFolder', async provider => {
+    const folder = await selectDirectory('Choose a folder already synced by your cloud app or mount');
+    return folder ? rpc('cloud_folder', { provider, path: folder }) : null;
+  });
+  register('cloudDisconnect', async id => {
+    const answer = await dialog.showMessageBox(win, { type: 'question', message: 'Disconnect this cloud location?', detail: 'Sync will stop and local connection credentials will be removed. Existing cloud archives and imported contexts will remain.', buttons: ['Cancel', 'Disconnect'], defaultId: 0, cancelId: 0 });
+    return answer.response === 1 ? rpc('cloud_disconnect', { id }) : null;
+  });
+  register('cloudGoogleConfig', async () => {
+    const file = await dialog.showOpenDialog(win, { title: 'Maintainer setup: choose Google OAuth Desktop client JSON', properties: ['openFile'], filters: [{ name: 'OAuth client JSON', extensions: ['json'] }] });
+    if (file.canceled) return null;
+    const stat = fs.statSync(file.filePaths[0]);
+    if (stat.size > 1024 * 1024) throw new Error('OAuth client file is too large');
+    return rpc('cloud_configure_google', { config: JSON.parse(fs.readFileSync(file.filePaths[0], 'utf8')) });
+  });
+  register('changeProject', async id => {
+    if (terminalController.isRunning(id)) throw new Error('Stop this context’s embedded terminal before changing its project folder.');
+    const folder = await selectDirectory('Choose the project folder to use when resuming this context');
+    return folder ? rpc('project_folder', { id, destination: folder }) : null;
+  });
+  register('moveContextFiles', async id => {
+    if (terminalController.isRunning(id)) throw new Error('Stop this context’s embedded terminal before moving its files.');
+    const folder = await selectDirectory('Choose the new provider context-store root');
+    if (!folder) return null;
+    const plan = await rpc('plan_move', { id, destination: folder });
+    const answer = await dialog.showMessageBox(win, { type: 'question', message: `Move ${plan.files.length} original context files?`,
+      detail: `From: ${plan.sourceRoot}\nTo: ${plan.destinationRoot}\n\nClose this conversation in external provider apps first. A recovery archive will be kept in GPT Manager. Existing destination files are never overwritten. Project source files are not moved. Provider authentication and shared indexes remain in their original store.`, buttons: ['Cancel', 'Move files'], defaultId: 0, cancelId: 0 });
+    return answer.response === 1 ? rpc('move_files', { id, destination: folder }) : null;
+  });
   register('copyText', text => {
     if (typeof text !== 'string' || text.length > 200000) throw new Error('Invalid clipboard text');
     clipboard.writeText(text);
   });
-  require('./terminals.cjs').installTerminals({ app, win, register, rpc, dialog, selectDirectory });
+  const terminalController = require('./terminals.cjs').installTerminals({ app, win, register, rpc, dialog, selectDirectory });
   await win.loadFile(path.join(__dirname, '../ui/index.html'));
   if (process.argv.includes('--smoke-test')) {
     try {
@@ -133,6 +165,12 @@ app.whenReady().then(async () => {
         if (document.querySelectorAll('.context-row').length !== 1) throw new Error('Search filtering failed');
         document.querySelector('#search').value = '';
         document.querySelector('#search').dispatchEvent(new Event('input'));
+        document.querySelector('[data-view="cloud"]').click();
+        if (document.querySelectorAll('.cloud-card').length !== 3) throw new Error('Cloud provider cards missing');
+        cloudSignIn('icloud');
+        if (!document.querySelector('#apple-email') || !document.querySelector('#apple-password')) throw new Error('Apple sign-in form missing');
+        document.querySelector('#cloud-dialog').close();
+        document.querySelector('[data-view="all"]').click();
         const codex = state.library.contexts.find(c => c.provider === 'codex');
         await selectContext(codex.id);
         await openTerminal(codex.id);
@@ -148,8 +186,9 @@ app.whenReady().then(async () => {
         await delay(400);
         if (!session.exited) throw new Error('PTY exit was not observed');
         document.querySelector('#terminal-dock').classList.add('hidden');
-        return { search: true, pty: true, terminalExit: true };
+        return { search: true, cloudUI: true, pty: true, terminalExit: true };
       })()`);
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'cloud') await win.webContents.executeJavaScript("state.view = 'cloud'; render();");
       await new Promise(r => setTimeout(r, 300));
       console.log('INTERACTION_RESULT ' + JSON.stringify(interaction));
       const output = process.env.GPT_MANAGER_SCREENSHOT;
