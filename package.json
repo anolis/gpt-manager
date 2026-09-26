@@ -1,20 +1,24 @@
 {
   "name": "gpt-manager",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "A local desktop library for AI contexts",
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "electron .",
     "test": "python3 -m unittest discover -s tests -v && node --test tests/test_*.cjs",
-    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/terminals.cjs && node --check ui/app.js && python3 -m compileall -q backend"
+    "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/terminals.cjs && node --check desktop/runtime.cjs && node --check ui/app.js && python3 -m compileall -q backend",
+    "build:backend": "python tools/build-backend.py",
+    "dist:win": "npm run build:backend && electron-builder --win --x64"
   },
   "devDependencies": {
-    "electron": "^44.4.5"
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0"
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
   },
   "engines": {
     "node": ">=22.12.0"

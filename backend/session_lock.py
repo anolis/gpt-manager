@@ -31,13 +31,19 @@ def handoff_status(provider, session_id):
 
 @contextmanager
 def context_lock(provider, session_id, token=None):
-    import fcntl
     path, marker = lock_paths(provider, session_id)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            if os.name == 'nt':
+                import msvcrt
+                if os.fstat(fd).st_size == 0: os.write(fd, b'0')
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, PermissionError):
             raise ValueError('This context is already running through GPT Manager on this machine. Close that session before resuming it here.') from None
         if marker.exists():
             state = json.loads(marker.read_text())
@@ -84,7 +90,7 @@ def resume_locked(provider, session_id, cwd, command, args, env=None):
         def forward(signum, frame):
             if child.poll() is None:
                 child.send_signal(signum)
-        for signum in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+        for signum in ([signal.SIGHUP] if hasattr(signal, 'SIGHUP') else []) + [signal.SIGTERM, signal.SIGINT]:
             signal.signal(signum, forward)
         return child.wait()
 

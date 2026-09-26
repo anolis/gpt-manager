@@ -8,7 +8,9 @@ A local desktop library for Codex, Claude Code, Gemini CLI, and Antigravity / ag
 
 ## Run
 
-Requires **Node.js 22.12+** (24 recommended), **Python 3.10+**, and a graphical desktop. Linux is the first supported platform.
+Windows 11 x64 builds bundle the backend and Python. Download the installer from [Releases](https://github.com/anolis/gpt-manager/releases), run it for your user account, then open **AI setup**. Early builds are unsigned and may display an unknown-publisher warning. Native Windows folders and CLIs are supported; WSL is a separate environment.
+
+To run from source, use the commands below. Requires **Node.js 22.12+** (24 recommended), **Python 3.10+**, and a graphical desktop. Linux is the first supported platform.
 
 ```sh
 nvm use                    # if you use nvm; reads .nvmrc
@@ -22,7 +24,7 @@ If your npm configuration disables install scripts, download Electron's runtime 
 node node_modules/electron/install.js
 ```
 
-Provider CLIs must be installed, authenticated, and on the launching shell's PATH. GPT Manager uses their existing installations and approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. Browsing uses no network service and loads no remote UI. Cloud sync is opt-in: the connector runs an authenticated service on an ephemeral localhost port and sends only selected context archives to your chosen cloud. Provider sign-in can briefly use an OAuth callback port. Resuming a provider uses that provider's normal network behavior.
+Use **AI setup** to install Codex, Claude Code, or Gemini CLI and sign in inside the embedded terminal. Existing installations on PATH are also supported. GPT Manager preserves provider approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. Browsing uses no network service and loads no remote UI. Cloud sync is opt-in: the connector runs an authenticated service on an ephemeral localhost port and sends only selected context archives to your chosen cloud. Provider sign-in can briefly use an OAuth callback port. Resuming a provider uses that provider's normal network behavior.
 
 ## What works
 
@@ -31,7 +33,7 @@ Provider CLIs must be installed, authenticated, and on the launching shell's PAT
 - Editable display titles, tags, notes, stars, and manager-only archive status.
 - Provider root locations, additional custom roots, and reveal-in-file-manager.
 - **Chat here**: real interactive PTYs rendered with xterm.js, up to eight terminal tabs. Tabs persist while navigating, resize with the window, and ask before stopping a running process.
-- **Terminal**: opens a Linux system terminal in the recorded project directory with the specific conversation resumed. Missing project directories trigger a folder picker.
+- **Terminal**: opens a Linux system terminal or Windows PowerShell in the recorded project directory with the specific conversation resumed. Missing project directories trigger a folder picker.
 - Portable `.gptctx` archives containing original context files, a versioned manifest, SHA-256 checksums, and manager annotations.
 - Archive validation and preview, import into an isolated library, and explicit conflict-safe restoration of original files.
 - Cloud account connections, optional synced-folder connections, manual sync, and opt-in automatic snapshot sync.
@@ -64,6 +66,29 @@ Portable archives work offline. SSH endpoints also support a guided **Resume her
 Archives are **not encrypted** and contain private conversations and potentially sensitive tool outputs. Global authentication files, settings, provider indexes, and source repositories are not exported. Claude session companion files and Antigravity conversation databases/brain artifacts are included. SQLite databases use the SQLite backup API to include committed WAL data. Transcripts are copied up to their initial length; a concurrent last partial record is retained but skipped by the viewer. Pause active agents for the most coherent multi-file backup.
 
 A native provider may need its index rebuilt or a matching project checkout before it can resume a restored session. Original project paths are preserved, not rewritten. In particular, Antigravity has shared summary/index state beyond the per-conversation database. **Archive round-trips and file restoration are tested; seamless native resume after migration is not guaranteed.** Backup whole provider installations separately when you need complete application-state disaster recovery.
+
+## Guided AI setup
+
+1. Open **AI setup** and choose **Install** under Codex, Claude Code, or Gemini CLI.
+2. Follow the runtime download progress, dependency installation stage, and CLI verification. Cancel or retry if necessary.
+3. Choose **Sign in**. Complete the provider's prompts and browser flow in the embedded terminal. Gemini opens its interactive onboarding screen; exit it after signing in.
+4. Open **Catch up** and select Codex or Claude to generate a recap, or resume a conversation from the library. Installing a CLI does not create a provider account or subscription. Installed status does not claim authentication succeeded.
+
+The manager downloads Node v24.18.0 from nodejs.org and checks a pinned SHA-256. It installs the official stable npm packages into separate directories under its user-data `providers` folder, using npm's package integrity checks. No sudo, administrator rights, global npm changes, manual PATH changes, or separate Node install are needed. Failed upgrades preserve the prior managed version; older versions are retained for running terminals. Authentication stays in each provider's normal store. Antigravity IDE / third-party agy installation remains manual.
+
+Package installation follows [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), [Claude Code setup](https://code.claude.com/docs/en/setup#install-with-npm), and [Gemini CLI installation](https://geminicli.com/docs/get-started/installation/). The Windows workflow validates real provider installation and `--version` without signing in or sending prompts.
+
+### Building the Windows installer
+
+Build on Windows with Node 24, Python 3.13, and the Visual Studio C++ build tools required by node-pty:
+
+```sh
+npm ci
+python -m pip install pyinstaller==6.19.0
+npm run dist:win
+```
+
+The NSIS installer appears in `dist`. CI builds on a native Windows runner, tests locks, archives, official CLI installation, the packaged backend, and ConPTY input/resize/exit, then uploads the installer artifact. Python is frozen with PyInstaller and shipped alongside Electron. Code signing is not configured yet. Account sign-in and real provider resume still need interactive Windows user validation.
 
 ## Catch up: daily and weekly work recaps
 
@@ -148,7 +173,7 @@ Close the conversation in external provider apps before moving files. Running em
 - Manager metadata and imported archives in Electron's user-data directory (`~/.config/gpt-manager` on typical Linux installations). The Locations screen shows the actual path.
 - Override `GPT_MANAGER_HOME` and `GPT_MANAGER_DATA` for isolated fixtures or alternate environments. `CODEX_HOME` / `CLAUDE_CONFIG_DIR` still take precedence over home defaults.
 
-Embedded terminals work through POSIX PTYs (Linux/macOS); external terminal launch targets Linux (`x-terminal-emulator`, GNOME Terminal, Konsole, or xterm). macOS has not been validated, and Windows ConPTY is not implemented. No distributable installer is packaged yet.
+Embedded terminals use POSIX PTYs on Linux/macOS and node-pty ConPTY on Windows 11. External terminals support Linux (`x-terminal-emulator`, GNOME Terminal, Konsole, or xterm) and Windows PowerShell. macOS remains unvalidated. SSH targets currently require a POSIX host with Python 3.10+; a Windows manager can browse and resume those hosts. Workspace copies containing symlinks can require Windows Developer Mode; existing local folders avoid that requirement. Git and OpenSSH remain optional system dependencies for Git checks and SSH locations.
 
 ## Verification
 

@@ -1,0 +1,43 @@
+name: Windows 11 build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - run: python -m pip install pyinstaller==6.19.0
+      - run: npm run check
+      - run: python -m unittest tests.test_providers tests.test_windows -v
+      - run: python tools/verify-installers.py
+      - run: npm run build:backend
+      - run: npx electron-builder --win --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Test packaged backend and Windows terminal
+        shell: pwsh
+        run: |
+          $env:GPT_MANAGER_HOME = Join-Path $env:RUNNER_TEMP 'gpt-smoke-home'
+          $env:GPT_MANAGER_DATA = Join-Path $env:RUNNER_TEMP 'gpt-smoke-data'
+          New-Item -ItemType Directory -Force $env:GPT_MANAGER_HOME | Out-Null
+          $process = Start-Process -FilePath 'dist/win-unpacked/GPT Manager.exe' -ArgumentList '--platform-smoke-test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged smoke failed: $($process.ExitCode)" }
+          Get-Content (Join-Path $env:GPT_MANAGER_DATA 'platform-smoke.json')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GPT-Manager-Windows-x64
+          path: dist/*Setup.exe
+          if-no-files-found: error

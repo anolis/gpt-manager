@@ -1,5 +1,6 @@
 """SSH endpoint discovery and dispatch. Uses existing SSH keys, agent and host trust."""
 import base64
+import zlib
 import copy
 import json
 import os
@@ -72,7 +73,10 @@ def ssh_arguments(host, operation, terminal=False):
     bootstrap += f"request=json.loads(base64.b64decode('{request}'))\n"
     bootstrap += "try:\n result=g['ssh_dispatch'](request)\n"
     bootstrap += " if request['operation']=='resume': sys.exit(result)\n if request['operation'] not in ('export','workspace'): print(json.dumps({'result':result}))\nexcept Exception as e:\n print(json.dumps({'error':str(e)}))\n sys.exit(1)\n"
-    remote_command = 'python3 -c ' + shlex.quote(bootstrap)
+    compressed = base64.b64encode(zlib.compress(bootstrap.encode(), 9)).decode()
+    remote_command = 'python3 -c ' + shlex.quote("import base64,zlib;exec(zlib.decompress(base64.b64decode('" + compressed + "')))")
+    if os.name == 'nt' and len(remote_command) > 30000:
+        raise ValueError('This remote operation exceeds Windows command limits.')
     return ['-tt' if terminal else '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', host, remote_command]
 
 

@@ -6,6 +6,9 @@ import threading
 import signal
 from pathlib import Path
 
+sys.stdin.reconfigure(encoding='utf-8')
+sys.stdout.reconfigure(encoding='utf-8')
+
 from manager import Manager
 from cloud import CloudSync
 from relocate import project_folder, plan_move, move_files
@@ -13,6 +16,7 @@ from remote import RemoteLocations, ssh_aliases
 from teleport import Teleport, git_check
 from network import local_networks, scan_network
 from catchup import CatchUp
+from providers import ProviderSetup
 
 p = argparse.ArgumentParser()
 p.add_argument('--data', required=True)
@@ -23,9 +27,11 @@ manager_lock = threading.RLock()
 cloud = CloudSync(manager, manager_lock)
 remote = RemoteLocations(manager, progress=lambda message: print(json.dumps({'event': 'handoffProgress', 'message': message}), flush=True))
 teleport = Teleport(remote)
-catchup = CatchUp(remote, manager_lock)
-signal.signal(signal.SIGTERM, lambda *_: (catchup.close(), cloud.close(), sys.exit(0)))
+setup = ProviderSetup(manager.data)
+catchup = CatchUp(remote, manager_lock, setup)
+signal.signal(signal.SIGTERM, lambda *_: (setup.close(), catchup.close(), cloud.close(), sys.exit(0)))
 cloud_methods = {f'cloud_{name}': getattr(cloud, name) for name in ('status', 'connect', 'answer', 'cancel', 'folder', 'configure', 'configure_google', 'disconnect', 'sync', 'tick')}
+setup_methods = {'setup_status': setup.status, 'setup_install': setup.install, 'setup_cancel': setup.cancel, 'provider_command': lambda provider: {'argv': setup.command(provider), 'env': setup.environment()}}
 catchup_methods = {f'catchup_{name}': getattr(catchup, name) for name in ('status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete')}
 methods = {name: getattr(manager, name) for name in ('scan', 'library', 'detail', 'annotate', 'add_root', 'files', 'export', 'preview', 'import_archive', 'restore')}
 methods.update({'project_folder': lambda **params: project_folder(manager, **params), 'plan_move': lambda **params: plan_move(manager, **params), 'move_files': lambda **params: move_files(manager, **params)})
@@ -40,10 +46,10 @@ for line in sys.stdin:
     request = {}
     try:
         request = json.loads(line)
-        method = methods.get(request.get('method')) or cloud_methods.get(request.get('method')) or catchup_methods.get(request.get('method'))
+        method = methods.get(request.get('method')) or cloud_methods.get(request.get('method')) or catchup_methods.get(request.get('method')) or setup_methods.get(request.get('method'))
         if method is None:
             raise ValueError('Unknown operation')
-        if request.get('method') in cloud_methods or request.get('method') in catchup_methods:
+        if request.get('method') in cloud_methods or request.get('method') in catchup_methods or request.get('method') in setup_methods:
             result = method(**request.get('params', {}))
         else:
             if request.get('method') in ('move_files', 'project_folder') and cloud.job and cloud.job['status'] == 'running':
@@ -59,5 +65,6 @@ for line in sys.stdin:
         response = {'id': request.get('id'), 'error': str(e)}
     print(json.dumps(response, ensure_ascii=False), flush=True)
 
+setup.close()
 catchup.close()
 cloud.close()

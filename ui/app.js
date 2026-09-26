@@ -3,8 +3,8 @@ const api = window.manager;
 const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
 const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
-const titles = { catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
-const descriptions = { catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
+const titles = { setup: 'AI setup', catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
+const descriptions = { setup: 'Install your AI assistant, sign in, and get back to your projects.', catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
 function button(text, className, handler) { const b = element('button', className, text); b.addEventListener('click', () => run(handler)); return b; }
 function bytes(n) { if (!n) return '0 B'; const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024))); return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${['B', 'KB', 'MB', 'GB'][i]}`; }
@@ -37,10 +37,12 @@ function providerLabel(provider) { const span = element('span', 'provider-label'
 function render() {
   $('#crumb').textContent = titles[state.view]; $('#page-title').textContent = titles[state.view]; $('#page-description').textContent = descriptions[state.view];
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
-  const library = !['locations', 'transfer', 'cloud', 'catchup'].includes(state.view);
+  const library = !['locations', 'transfer', 'cloud', 'catchup', 'setup'].includes(state.view);
   $('#library-view').classList.toggle('hidden', !library); $('#stats').classList.toggle('hidden', !library);
   $('#cloud-view').classList.toggle('hidden', state.view !== 'cloud');
   $('#catchup-view').classList.toggle('hidden', state.view !== 'catchup');
+  $('#setup-view').classList.toggle('hidden', state.view !== 'setup');
+  if (state.view === 'setup') loadSetup();
   if (state.view === 'catchup') renderCatchUp();
   $('#locations-view').classList.toggle('hidden', state.view !== 'locations'); $('#transfer-view').classList.toggle('hidden', state.view !== 'transfer');
   $('#nav-total').textContent = state.library.contexts.filter(c => !c.archived).length;
@@ -159,14 +161,18 @@ document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.ke
 // Terminals remain mounted when navigating the library, preserving the live CLI screen.
 const terminalSessions = new Map(); let activeTerminal = null;
 async function openTerminal(id) {
-  if (terminalSessions.has(id)) { showTerminal(id); return; }
+  if (terminalSessions.has(id)) {
+    const previous = terminalSessions.get(id);
+    if (!previous.exited) { showTerminal(id); return; }
+    await api.terminalClose(previous.token); previous.term.dispose(); previous.host.remove(); terminalSessions.delete(id);
+  }
   const c = state.library.contexts.find(c => c.id === id);
-  const session = await api.terminalStart(id);
+  const session = id.startsWith('setup:') ? await api.providerSignIn(id.slice(6)) : await api.terminalStart(id);
   if (!session) return;
   const term = new Terminal({ cursorBlink: true, fontFamily: 'monospace', fontSize: 12, scrollback: 5000, theme: { background: '#111610', foreground: '#d7e3cf', cursor: '#d3f49a' } });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
   const host = element('div', 'terminal-host'); $('#terminal-content').append(host); term.open(host);
-  terminalSessions.set(id, { term, fit, host, token: session.token, title: `${session.machine || c.machine || 'Local'} · ${c.title}`, exited: false });
+  terminalSessions.set(id, { term, fit, host, token: session.token, title: `${session.machine || c?.machine || 'Local'} · ${c?.title || providers[id.slice(6)] + ' sign-in'}`, exited: false });
   term.onData(data => api.terminalInput({ token: session.token, data }));
   term.onResize(({ cols, rows }) => api.terminalResize({ token: session.token, cols, rows }));
   showTerminal(id); await api.terminalAttach(session.token);
@@ -399,12 +405,14 @@ function renderCatchUp() {
   }
 }
 function acceptCatchUp(value) {
+  const providersChanged = JSON.stringify(catchupState.providers) !== JSON.stringify(value.providers);
   catchupState = value;
   if (value.preview?.id !== catchupPreviewId) {
     catchupPreviewId = value.preview?.id;
     catchupSelection.clear(); for (const source of value.preview?.sources || []) catchupSelection.add(source.sourceId);
     renderCatchupPreview();
   }
+  if (providersChanged) renderCatchupPreview();
   paintCatchUp();
   const job = value.job;
   if (job && job.status === 'complete' && job.id !== catchupSeenJob) {
@@ -444,6 +452,7 @@ function renderCatchupPreview() {
     row.append(detail); sources.append(row);
   }
   parent.append(sources);
+  parent.append(button('Install or sign in to a provider', 'quiet', () => { state.view = 'setup'; render(); }));
   const controls = element('div', 'catchup-generate'), provider = element('select'); provider.id = 'catchup-provider'; provider.setAttribute('aria-label', 'Summary provider');
   for (const option of catchupState.providers) { const item = element('option', '', `${option.id === 'codex' ? 'Codex' : 'Claude'}${option.available ? '' : ' — not installed'}`); item.value = option.available ? option.id : ''; item.disabled = !option.available; provider.append(item); }
   const model = element('input'); model.id = 'catchup-model'; model.placeholder = 'Model (optional)'; model.setAttribute('aria-label', 'Summary model, optional');
@@ -486,3 +495,37 @@ setInterval(async () => {
   catchupPolling = true;
   try { acceptCatchUp(await api.catchupStatus()); } catch (error) { toast(error.message, true); } finally { catchupPolling = false; }
 }, 1000);
+
+
+// Installation progress does not interrupt account sign-in terminals.
+let setupState = null, setupLoading = false;
+async function loadSetup() {
+  if (setupLoading) return;
+  setupLoading = true;
+  try { setupState = await api.setupStatus(); if (setupState.job?.status === 'complete') catchupLoaded = false; renderSetup(); }
+  catch (error) { toast(error.message, true); }
+  finally { setupLoading = false; }
+}
+function renderSetup() {
+  const page = $('#setup-view'); page.replaceChildren();
+  page.append(element('p', 'transfer-note', '1. Install an assistant.  2. Sign in with your account.  3. Open Catch up or resume a conversation. Downloads are kept inside GPT Manager; no administrator access or manual Node setup is needed. Your provider’s subscription and usage limits still apply.'));
+  const running = setupState?.job?.status === 'running';
+  const cards = element('div', 'transfer-grid');
+  for (const provider of setupState?.providers || []) {
+    const card = element('article', 'transfer-card');
+    card.append(element('h2', '', providers[provider.id]), element('p', 'muted', provider.available ? `${provider.managed ? 'Managed by GPT Manager' : 'Existing installation'}${provider.version ? ' · ' + provider.version : ''}. Sign-in is managed by the provider.` : 'Ready to install. GPT Manager downloads the official provider package and its dependencies.'));
+    const install = button(provider.available ? 'Install latest managed version' : 'Install', 'button primary', async () => { setupState = await api.setupInstall({ provider: provider.id }); renderSetup(); }); install.disabled = running;
+    const signIn = button('Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available;
+    card.append(install, signIn); cards.append(card);
+  }
+  page.append(cards);
+  const job = setupState?.job;
+  if (job) {
+    const status = element('div', 'transfer-note'); status.setAttribute('role', 'status'); status.append(element('p', '', job.message));
+    if (running) { const progress = element('progress', 'catchup-progress'); progress.max = 100; if (job.percent !== null) progress.value = job.percent; status.append(progress, button('Cancel installation', 'quiet', async () => { setupState = await api.setupCancel(); renderSetup(); })); }
+    page.append(status);
+  }
+  page.append(button('Refresh installation status', 'button', loadSetup), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
+  page.append(element('p', 'muted', 'Already installed a CLI yourself? GPT Manager can use existing installations. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
+}
+setInterval(() => { if (setupState?.job?.status === 'running') loadSetup(); }, 1000);

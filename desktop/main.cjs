@@ -41,10 +41,8 @@ app.whenReady().then(async () => {
     process.env.HOME = fixture;
   }
   const data = process.env.GPT_MANAGER_DATA || app.getPath('userData');
-  worker = spawn(process.env.GPT_MANAGER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
-    [path.join(__dirname, '../backend/rpc.py'), '--data', data,
-      ...(process.env.GPT_MANAGER_HOME ? ['--home', process.env.GPT_MANAGER_HOME] : [])],
-    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const backend = require('./runtime.cjs').backendCommand('rpc', app);
+  worker = spawn(backend.command, [...backend.args, '--data', data, ...(process.env.GPT_MANAGER_HOME ? ['--home', process.env.GPT_MANAGER_HOME] : [])], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   worker.on('error', error => {
     dialog.showErrorBox('Backend could not start', `Install Python 3.10 or newer, or set GPT_MANAGER_PYTHON.\n\n${error.message}`);
     app.quit();
@@ -69,6 +67,7 @@ app.whenReady().then(async () => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   for (const name of ['scan', 'library', 'detail', 'annotate', 'files']) register(name, params => rpc(name, params));
+  for (const name of ['status', 'install', 'cancel']) register('setup' + name[0].toUpperCase() + name.slice(1), params => rpc('setup_' + name, params));
   for (const name of ['status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete']) register('catchup' + name[0].toUpperCase() + name.slice(1), params => rpc('catchup_' + name, params));
   for (const [name, method] of Object.entries({ sshAdd: 'ssh_add', sshRemove: 'ssh_remove', sshRefresh: 'ssh_refresh', sshAliases: 'ssh_aliases', localNetworks: 'local_networks', scanNetwork: 'scan_network' })) register(name, params => rpc(method, params));
   register('handoffRelease', async id => {
@@ -178,6 +177,25 @@ app.whenReady().then(async () => {
   });
   const terminalController = require('./terminals.cjs').installTerminals({ app, win, register, rpc, dialog, selectDirectory });
   await win.loadFile(path.join(__dirname, '../ui/index.html'));
+  if (process.argv.includes('--platform-smoke-test')) {
+    try {
+      if (!process.env.GPT_MANAGER_HOME || !process.env.GPT_MANAGER_DATA) throw new Error('Platform smoke requires isolated fixture paths.');
+      const library = await rpc('scan');
+      const setup = await rpc('setup_status');
+      if (!Array.isArray(library.contexts) || setup.providers.length !== 3) throw new Error('Backend smoke failed');
+      await new Promise((resolve, reject) => {
+        const pty = require('node-pty').spawn('powershell.exe', ['-NoProfile', '-Command', "Write-Output 'PTY_READY'; $value = [Console]::ReadLine(); Write-Output ('REPLY:' + $value)"], { cols: 100, rows: 24, cwd: process.env.GPT_MANAGER_HOME, env: process.env, useConpty: true });
+        let output = '', sent = false;
+        const timer = setTimeout(() => { pty.kill(); reject(new Error('ConPTY timed out: ' + output)); }, 20000);
+        pty.onData(data => { output += data; if (output.includes('PTY_READY') && !sent) { sent = true; pty.resize(120, 30); pty.write('hello-context\r'); } });
+        pty.onExit(({ exitCode }) => { clearTimeout(timer); exitCode === 0 && output.includes('REPLY:hello-context') ? resolve() : reject(new Error('ConPTY failed: ' + output)); });
+      });
+      await win.webContents.executeJavaScript("state.view = 'setup'; render();");
+      fs.writeFileSync(path.join(data, 'platform-smoke.json'), JSON.stringify({ backend: true, conpty: true, setup: true }));
+      app.exit(0);
+    } catch (error) { console.error(error); app.exit(1); }
+    return;
+  }
   if (process.argv.includes('--smoke-test')) {
     try {
       for (let i = 0; i < 120; i++) {
@@ -203,6 +221,9 @@ app.whenReady().then(async () => {
         await addSshDialog();
         if (!document.querySelector('#ssh-host')) throw new Error('SSH endpoint form missing');
         document.querySelector('#ssh-host').closest('dialog').close();
+        document.querySelector('[data-view="setup"]').click();
+        for (let i = 0; i < 40 && !setupState; i++) await delay(50);
+        if (document.querySelectorAll('#setup-view .transfer-card').length !== 3) throw new Error('Provider setup cards missing');
         document.querySelector('[data-view="catchup"]').click();
         for (let i = 0; i < 40 && !catchupLoaded; i++) await delay(50);
         document.querySelector('#catchup-period').value = 'seven';
@@ -246,6 +267,7 @@ app.whenReady().then(async () => {
         document.querySelector('#terminal-dock').classList.add('hidden');
         return { search: true, cloudUI: true, pty: true, terminalExit: true };
       })()`);
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'setup') await win.webContents.executeJavaScript("state.view = 'setup'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'cloud') await win.webContents.executeJavaScript("state.view = 'cloud'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'locations') await win.webContents.executeJavaScript("state.view = 'locations'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'catchup') await win.webContents.executeJavaScript("state.view = 'catchup'; render(); document.querySelector('#catchup-result').scrollIntoView();");

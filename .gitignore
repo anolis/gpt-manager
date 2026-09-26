@@ -12,3 +12,6 @@ core.*
 /cloud-oauth.json
 client_secret*.json
 accounts.conf
+
+/build/
+/dist/

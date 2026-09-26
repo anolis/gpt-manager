@@ -17,6 +17,11 @@ def local_networks():
                 for address in interface.get('addr_info', []):
                     if address.get('family') == 'inet':
                         addresses.append((interface['ifname'], address['local'], address['prefixlen']))
+        elif platform.system() == 'Windows':
+            result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias,IPAddress,PrefixLength | ConvertTo-Json -Compress'], capture_output=True, text=True, timeout=10, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            items = json.loads(result.stdout or '[]')
+            for item in ([items] if isinstance(items, dict) else items):
+                addresses.append((item['InterfaceAlias'], item['IPAddress'], item['PrefixLength']))
         elif platform.system() == 'Darwin':
             result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5, check=True)
             interface = ''

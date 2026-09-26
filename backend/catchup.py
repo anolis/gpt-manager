@@ -78,7 +78,8 @@ def validate_summary(value, sources):
 
 
 class CatchUp:
-    def __init__(self, remote, manager_lock):
+    def __init__(self, remote, manager_lock, setup=None):
+        self.setup = setup
         self.remote, self.manager_lock = remote, manager_lock
         self.directory = remote.manager.data / 'catch-up'
         self.directory.mkdir(exist_ok=True, mode=0o700)
@@ -90,6 +91,8 @@ class CatchUp:
         self.cancel_event = threading.Event()
 
     def providers(self):
+        if self.setup:
+            return [p for p in self.setup.status()['providers'] if p['id'] in ('codex', 'claude')]
         return [{'id': name, 'available': bool(shutil.which(name))} for name in ('codex', 'claude')]
 
     def status(self):
@@ -197,7 +200,7 @@ class CatchUp:
         sources = [source for source in preview['sources'] if source['sourceId'] in source_ids]
         if len(sources) != len(set(source_ids)):
             raise ValueError('The source selection is no longer available.')
-        if provider not in ('codex', 'claude') or not shutil.which(provider):
+        if provider not in ('codex', 'claude') or not any(p['id'] == provider and p['available'] for p in self.providers()):
             raise ValueError('Install and sign into the selected provider CLI first.')
         # Validate before starting a worker or sending any data.
         generator_command(provider, shutil.which(provider), Path('/unused'), model)
@@ -224,7 +227,7 @@ class CatchUp:
     def _stop(self, process):
         if process and process.poll() is None:
             try:
-                os.killpg(process.pid, signal.SIGTERM) if os.name != 'nt' else process.terminate()
+                os.killpg(process.pid, signal.SIGTERM) if os.name != 'nt' else subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True, timeout=10)
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL) if os.name != 'nt' else process.kill()
@@ -236,16 +239,17 @@ class CatchUp:
         with tempfile.TemporaryDirectory(prefix='gpt-catch-up-') as temporary:
             directory = Path(temporary)
             (directory / 'schema.json').write_text(json.dumps(SCHEMA))
-            (directory / 'prompt.txt').write_text(prompt)
-            env = dict(os.environ)
+            (directory / 'prompt.txt').write_text(prompt, encoding='utf-8')
+            env = self.setup.environment() if self.setup else dict(os.environ)
             # This is a separate summary invocation, not a nested continuation of the host session.
             env.pop('CLAUDECODE', None)
-            args = generator_command(provider, shutil.which(provider), directory, model)
+            command = self.setup.command(provider) if self.setup else [shutil.which(provider)]
+            args = [*command, *generator_command(provider, command[0], directory, model)[1:]]
             with (directory / 'prompt.txt').open('rb') as stdin, (directory / 'stdout').open('wb') as stdout, (directory / 'stderr').open('wb') as stderr:
                 self._check_cancel()
                 with self.lock:
                     self._check_cancel()
-                    process = subprocess.Popen(args, stdin=stdin, stdout=stdout, stderr=stderr, cwd=directory, env=env, start_new_session=os.name != 'nt')
+                    process = subprocess.Popen(args, stdin=stdin, stdout=stdout, stderr=stderr, cwd=directory, env=env, start_new_session=os.name != 'nt', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     self.process = process
                 self._message(f'Generating your recap with {provider.capitalize()}… This uses your provider account.')
                 deadline = time.monotonic() + CLI_TIMEOUT
@@ -269,7 +273,7 @@ class CatchUp:
             if not result_path.exists() or result_path.stat().st_size > 2 * 1024**2:
                 raise ValueError('The provider did not return a usable summary.')
             try:
-                value = json.loads(result_path.read_text())
+                value = json.loads(result_path.read_text(encoding='utf-8'))
                 if provider == 'claude':
                     if value.get('is_error'): raise ValueError('Provider reported an error')
                     value = value.get('structured_output') or json.loads(value.get('result', '{}'))

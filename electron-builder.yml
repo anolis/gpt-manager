@@ -1,0 +1,24 @@
+appId: io.github.anolis.gpt-manager
+productName: GPT Manager
+asar: true
+files:
+  - desktop/**
+  - ui/**
+  - package.json
+extraResources:
+  - from: build/backend/gpt-manager-backend
+    to: backend
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: GPT-Manager-${version}-Windows-${arch}-Setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  deleteAppDataOnUninstall: false
+linux:
+  target: AppImage
+  category: Development
