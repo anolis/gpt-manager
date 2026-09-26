@@ -523,7 +523,7 @@ function renderSetup() {
   if (job) {
     const status = element('div', 'transfer-note'); status.setAttribute('role', 'status'); status.append(element('p', '', job.message));
     if (running) { const progress = element('progress', 'catchup-progress'); progress.max = 100; if (job.percent !== null) progress.value = job.percent; status.append(progress, button('Cancel installation', 'quiet', async () => { setupState = await api.setupCancel(); renderSetup(); })); }
-    page.append(status);
+    page.insertBefore(status, cards);
   }
   page.append(button('Refresh installation status', 'button', loadSetup), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
   page.append(element('p', 'muted', 'Already installed a CLI yourself? GPT Manager can use existing installations. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
