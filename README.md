@@ -59,11 +59,33 @@ CLI syntax was checked against installed `codex`, `claude`, and `agy` help, the 
 4. Read imported contexts immediately. To resume natively, choose **Restore files** on an imported context and select the destination provider root, or use an empty staging folder to inspect the restored layout first.
 5. Refresh the manager after restoring to a connected provider store, then resume the local copy.
 
-This is file-based teleportation. Direct peer pairing/network sync and cross-provider conversion are not implemented. Imported contexts are library copies until explicitly restored. Restore rejects conflicts and does not overwrite files. Provider source files are untouched by browsing and organization.
+Portable archives work offline. SSH endpoints also support a guided **Resume here** handoff, described below. Cross-provider conversion and history merging are not implemented. Imported contexts are library copies until explicitly restored. Restore rejects conflicts and does not overwrite files. Provider source files are untouched by browsing and organization.
 
 Archives are **not encrypted** and contain private conversations and potentially sensitive tool outputs. Global authentication files, settings, provider indexes, and source repositories are not exported. Claude session companion files and Antigravity conversation databases/brain artifacts are included. SQLite databases use the SQLite backup API to include committed WAL data. Transcripts are copied up to their initial length; a concurrent last partial record is retained but skipped by the viewer. Pause active agents for the most coherent multi-file backup.
 
 A native provider may need its index rebuilt or a matching project checkout before it can resume a restored session. Original project paths are preserved, not rewritten. In particular, Antigravity has shared summary/index state beyond the per-conversation database. **Archive round-trips and file restoration are tested; seamless native resume after migration is not guaranteed.** Backup whole provider installations separately when you need complete application-state disaster recovery.
+
+## SSH context locations and Resume here
+
+Open **Context locations → Add SSH endpoint**. Choose a named alias from `~/.ssh/config` (including `Include` files), or enter `user@hostname`. Wildcard/negated Host patterns are not offered as aliases. OpenSSH remains responsible for ports, jump hosts, identities and other configuration.
+
+- **Scan local network** discovers SSH banners on port 22 in a selected, directly attached private IPv4 subnet. Scans are explicit, limited to the local /24 (or smaller), and use at most 32 concurrent connections. They do not authenticate or accept host keys. IPv6, nonstandard ports and routed subnets require a manually added endpoint or alias.
+- First connect using your system SSH client to verify the host key and set up key/agent authentication. GPT Manager requires existing host trust and noninteractive authentication; it never disables host-key checking or copies private keys. Hosts need Python 3.10+, a POSIX environment, and their authenticated provider CLIs on the SSH command PATH.
+- Remote discovery reads native stores and the remote manager’s default settings/annotations through a temporary Python helper. It does not require installing GPT Manager on the remote host. Remote imports are not listed. Library rows, inspectors and terminal tabs identify the execution machine. Refresh scans configured endpoints; failed refreshes retain the in-memory snapshot with an offline label.
+- **Resume remotely** runs the provider on the source host inside the embedded SSH terminal. **Terminal** uses an external local terminal to run that SSH session. Remote browsing is read-only; provider interaction occurs on that host.
+
+Choose **Resume here** to hand off a remote conversation to this machine:
+
+1. Stop any external provider sessions using it. Choose an existing local project folder, or an empty destination for a copy of the remote work folder.
+2. For an existing Git checkout with an upstream, GPT Manager fetches and checks available commits. It asks before applying a fast-forward update. Dirty or divergent checkouts are never automatically merged, reset or stashed. Keeping current files does not bring over source workspace changes or unpushed commits.
+3. The source receives a handoff reservation. The archive is transferred over SSH, validated, imported and restored into the local provider’s default store without replacing existing sessions. An optional workspace copy includes `.git`, hidden files, dependencies and uncommitted changes. It is limited to 16 GiB / 100,000 entries, detects changes during capture, and only preserves symlinks within the project. Linked Git worktrees/external `.git` directories require an existing local checkout.
+4. The local project mapping is saved and the local terminal opens. Gemini JSON sessions are placed in the destination project’s registered bucket (or legacy path hash) and get a matching project hash; the imported archive retains the original. Provider credentials, global indexes, installed CLIs and historical path references are not rewritten or transferred with the conversation. Native resume remains dependent on the installed provider version.
+
+The source files remain as a backup, marked **handed off**. Cooperative locks in `~/.local/state/gpt-manager/session-locks` prevent competing GPT Manager launches of a provider/session on the same host/account. Reservations survive app restarts. Source context changes during capture/finalization are detected; a failed transfer releases the reservation when reachable, while a successful local restore keeps the source reserved even if final confirmation fails. Local recovery receipts are stored under `<manager data>/handoffs`.
+
+To use a retained source copy again, stop the destination session and explicitly choose **Release handoff**. The manager warns about other discovered native copies. These protections do **not** control provider sessions launched outside GPT Manager, older manager versions, or disconnected copies on other machines; they are not distributed consensus or history merging. If a handoff is interrupted, refresh both libraries and inspect the receipt/source state before retrying.
+
+SSH transport, remote resume, workspace transfer, source blocking and release are tested against an isolated localhost OpenSSH server with synthetic contexts. Real provider resume behavior and platform-specific configurations still need user testing.
 
 ## Cloud sync
 

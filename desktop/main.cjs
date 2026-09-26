@@ -38,6 +38,7 @@ app.whenReady().then(async () => {
     }
     delete process.env.CODEX_HOME;
     delete process.env.CLAUDE_CONFIG_DIR;
+    process.env.HOME = fixture;
   }
   const data = process.env.GPT_MANAGER_DATA || app.getPath('userData');
   worker = spawn(process.env.GPT_MANAGER_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
@@ -56,6 +57,7 @@ app.whenReady().then(async () => {
   readline.createInterface({ input: worker.stdout }).on('line', line => {
     try {
       const msg = JSON.parse(line), task = pending.get(msg.id);
+      if (msg.event === 'handoffProgress' && win && !win.isDestroyed()) win.webContents.send('handoffProgress', msg.message);
       if (task) { pending.delete(msg.id); msg.error ? task.reject(new Error(msg.error)) : task.resolve(msg.result); }
     } catch (e) { console.error('Invalid backend response', e.message); }
   });
@@ -67,6 +69,36 @@ app.whenReady().then(async () => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   for (const name of ['scan', 'library', 'detail', 'annotate', 'files']) register(name, params => rpc(name, params));
+  for (const [name, method] of Object.entries({ sshAdd: 'ssh_add', sshRemove: 'ssh_remove', sshRefresh: 'ssh_refresh', sshAliases: 'ssh_aliases', localNetworks: 'local_networks', scanNetwork: 'scan_network' })) register(name, params => rpc(method, params));
+  register('handoffRelease', async id => {
+    const answer = await dialog.showMessageBox(win, { type: 'warning', message: 'Allow this source context to resume again?', detail: 'First stop the conversation on its destination machine. Releasing the handoff can create divergent histories if both copies are used. No histories will be merged.', buttons: ['Keep handed off', 'Release handoff'], defaultId: 0, cancelId: 0 });
+    return answer.response === 1 ? rpc('handoff_release', { id }) : null;
+  });
+  register('resumeHere', async id => {
+    const context = (await rpc('library')).contexts.find(c => c.id === id);
+    if (!context || context.origin !== 'remote') throw new Error('Select an SSH context.');
+    if (terminalController.isRunning(id)) throw new Error('Stop this remote terminal before handing the context off.');
+    const mode = await dialog.showMessageBox(win, { type: 'question', message: 'Where should this conversation work locally?', detail: `Source: ${context.machine}\nProject: ${context.project || 'Not recorded'}\n\nUse an existing local folder (source workspace changes will not be copied), or copy the remote work folder including .git, hidden files, dependencies and uncommitted changes. Stop external provider sessions and edits on the source first. GPT Manager will reserve the source and retain its context files as a backup.`, buttons: ['Cancel', 'Use existing folder', 'Copy remote work folder'], defaultId: 1, cancelId: 0 });
+    if (!mode.response) return null;
+    const folder = await selectDirectory(mode.response === 2 ? 'Choose an empty folder for the remote work folder' : 'Choose the existing local project folder');
+    if (!folder) return null;
+    if (mode.response === 1) {
+      let git;
+      try { git = await rpc('git_check', { folder }); }
+      catch (error) {
+        const answer = await dialog.showMessageBox(win, { type: 'warning', message: 'Could not check Git updates', detail: `${error.message}\n\nContinue with the local files as they are?`, buttons: ['Cancel', 'Use current files'], defaultId: 0, cancelId: 0 });
+        if (answer.response === 0) return null;
+        git = {};
+      }
+      if (git.behind > 0) {
+        const canPull = !git.dirty && git.ahead === 0;
+        const answer = await dialog.showMessageBox(win, { type: 'question', message: `${git.behind} upstream commit(s) available from ${git.upstream}`, detail: canPull ? 'Fetch completed. Apply a fast-forward update to the local checkout before resuming?' : 'The checkout has local changes or divergent commits. Update it manually, or resume with its current files. GPT Manager will not merge or discard your work.', buttons: canPull ? ['Cancel', 'Keep current files', 'Pull updates'] : ['Cancel', 'Keep current files'], defaultId: 0, cancelId: 0 });
+        if (answer.response === 0) return null;
+        if (answer.response === 2) await rpc('git_check', { folder, pull: true });
+      }
+    }
+    return rpc('teleport', { id, folder, copy_workspace: mode.response === 2 });
+  });
   register('addRoot', async provider => {
     const folder = await selectDirectory('Choose provider store: Codex home, Claude projects, Gemini tmp, or Antigravity data root');
     return folder ? rpc('add_root', { provider, path: folder }) : null;
@@ -165,6 +197,11 @@ app.whenReady().then(async () => {
         if (document.querySelectorAll('.context-row').length !== 1) throw new Error('Search filtering failed');
         document.querySelector('#search').value = '';
         document.querySelector('#search').dispatchEvent(new Event('input'));
+        document.querySelector('[data-view="locations"]').click();
+        if (!document.querySelector('#locations-view').textContent.includes('SSH endpoints') || !document.querySelector('#locations-view').textContent.includes('Scan local network')) throw new Error('SSH location controls missing');
+        await addSshDialog();
+        if (!document.querySelector('#ssh-host')) throw new Error('SSH endpoint form missing');
+        document.querySelector('#ssh-host').closest('dialog').close();
         document.querySelector('[data-view="cloud"]').click();
         if (document.querySelectorAll('.cloud-card').length !== 3) throw new Error('Cloud provider cards missing');
         document.querySelector('.maintainer-setup summary').click();
@@ -200,6 +237,7 @@ app.whenReady().then(async () => {
         return { search: true, cloudUI: true, pty: true, terminalExit: true };
       })()`);
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'cloud') await win.webContents.executeJavaScript("state.view = 'cloud'; render();");
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'locations') await win.webContents.executeJavaScript("state.view = 'locations'; render();");
       await new Promise(r => setTimeout(r, 300));
       console.log('INTERACTION_RESULT ' + JSON.stringify(interaction));
       const output = process.env.GPT_MANAGER_SCREENSHOT;

@@ -544,7 +544,7 @@ class Manager:
             stage.rename(imports / key)
         return self.scan()
 
-    def restore(self, id, destination):
+    def restore(self, id, destination, project_folder=None):
         ctx = self.get(id)
         if ctx['origin'] != 'imported':
             raise ValueError('Native restore is available for imported contexts')
@@ -555,6 +555,17 @@ class Manager:
         targets = []
         for source, relative in files:
             self.safe_relative(relative)
+            if ctx['provider'] == 'gemini' and project_folder:
+                project = str(Path(project_folder).resolve())
+                project_hash = hashlib.sha256(project.encode()).hexdigest()
+                registry = read_json(root.parent / 'projects.json', {}).get('projects', {})
+                bucket = registry.get(project, project_hash)
+                if not isinstance(bucket, str) or not bucket or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in bucket):
+                    raise ValueError('Invalid Gemini project registry entry')
+                marker = root / bucket / '.project_root'
+                if marker.exists() and marker.read_text().strip() != project:
+                    raise ValueError('Gemini project bucket belongs to a different directory')
+                relative = str(Path(bucket) / 'chats' / Path(relative).name)
             target = root / relative
             if not target.resolve().is_relative_to(root):
                 raise ValueError('Destination escapes the chosen root through a symlink')
@@ -573,8 +584,17 @@ class Manager:
                 with target.open('xb') as out:
                     written.append(target)
                     os.chmod(target, 0o600)
-                    with source.open('rb') as inp:
-                        shutil.copyfileobj(inp, out)
+                    if ctx['provider'] == 'gemini' and project_folder:
+                        if source.stat().st_size > 128 * 1024**2:
+                            raise ValueError('Gemini context exceeds the 128 MiB remapping limit')
+                        record = json.loads(source.read_text())
+                        record['projectHash'] = project_hash
+                        if 'cwd' in record:
+                            record['cwd'] = project
+                        out.write(json.dumps(record, ensure_ascii=False).encode())
+                    else:
+                        with source.open('rb') as inp:
+                            shutil.copyfileobj(inp, out)
         except Exception:
             for path in written:
                 path.unlink(missing_ok=True)

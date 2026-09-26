@@ -4,7 +4,7 @@ const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
 const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
 const titles = { all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
-const descriptions = { all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'Know where your context lives. Connect every local store.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
+const descriptions = { all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
 function button(text, className, handler) { const b = element('button', className, text); b.addEventListener('click', () => run(handler)); return b; }
 function bytes(n) { if (!n) return '0 B'; const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024))); return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${['B', 'KB', 'MB', 'GB'][i]}`; }
@@ -16,7 +16,7 @@ async function operation(label, fn) {
   state.busy = true; $('#status').textContent = label;
   try { return await fn(); } finally { state.busy = false; updateStatus(); }
 }
-function updateStatus() { $('#status').textContent = `${state.library.contexts.length} contexts · ${state.library.locations.filter(x => x.exists).length} connected stores${state.library.warnings?.length ? ` · ${state.library.warnings.length} scan warnings` : ''}`; $('#status').title = (state.library.warnings || []).join('\n'); }
+function updateStatus() { if (state.library.machine) { document.querySelector('.workspace').title = `Local execution: ${state.library.machine.name} · ${state.library.machine.home}`; document.querySelector('.breadcrumb').firstChild.textContent = state.library.machine.name + ' '; } $('#status').textContent = `${state.library.contexts.length} contexts · ${state.library.locations.filter(x => x.exists).length} connected stores${state.library.warnings?.length ? ` · ${state.library.warnings.length} scan warnings` : ''}`; $('#status').title = (state.library.warnings || []).join('\n'); }
 function updateLibrary(library) {
   state.library = library;
   state.selected = new Set([...state.selected].filter(id => library.contexts.some(c => c.id === id)));
@@ -65,7 +65,7 @@ function renderRows() {
     const check = element('input'); check.type = 'checkbox'; check.checked = state.selected.has(c.id); check.setAttribute('aria-label', `Select ${c.title}`); check.onclick = e => e.stopPropagation(); check.onchange = () => { check.checked ? state.selected.add(c.id) : state.selected.delete(c.id); updateSelection(); };
     const content = element('div', 'row-content'), title = element('div', 'row-title'); title.append(element('h3', '', `${c.starred ? '★ ' : ''}${c.title}`), element('time', '', date(c.updated)));
     const meta = element('div', 'row-meta'); meta.append(providerLabel(c.provider), document.createTextNode(' / '), element('span', 'project', c.project ? c.project.split(/[\\/]/).filter(Boolean).pop() : 'Project not recorded')); meta.title = c.project;
-    const bottom = element('div', 'row-bottom'); bottom.append(element('span', '', bytes(c.size))); if (c.origin === 'imported') bottom.append(element('span', 'tag', 'imported')); for (const tag of (c.tags || []).slice(0, 3)) bottom.append(element('span', 'tag', tag));
+    const bottom = element('div', 'row-bottom'); bottom.append(element('span', '', bytes(c.size)), element('span', 'tag', `${c.origin === 'remote' ? 'SSH · ' : ''}${c.machine || 'This machine'}`)); if (c.copies?.length) bottom.append(element('span', 'tag', 'Multiple copies')); if (c.offline) bottom.append(element('span', 'tag', 'Offline')); if (c.origin === 'imported') bottom.append(element('span', 'tag', 'imported')); for (const tag of (c.tags || []).slice(0, 3)) bottom.append(element('span', 'tag', tag));
     content.append(title, meta, bottom); row.append(check, content); rows.append(row);
   }
 }
@@ -74,14 +74,15 @@ function activeContext() { return state.library.contexts.find(c => c.id === stat
 function renderInspector(loading = false) {
   const c = activeContext(); if (!c) return;
   const pane = $('#inspector'); pane.replaceChildren();
-  const head = element('div', 'inspect-head'), top = element('div', 'inspect-top'); top.append(providerLabel(c.provider), button(c.starred ? '★ Starred' : '☆ Star', 'quiet', async () => { updateLibrary(await api.annotate({ id: c.id, starred: !c.starred })); renderInspector(); }));
+  const head = element('div', 'inspect-head'), top = element('div', 'inspect-top'); top.append(providerLabel(c.provider)); if (c.origin !== 'remote') top.append(button(c.starred ? '★ Starred' : '☆ Star', 'quiet', async () => { updateLibrary(await api.annotate({ id: c.id, starred: !c.starred })); renderInspector(); }));
   head.append(top, element('h2', '', c.title), element('div', 'project-path', c.project || 'Working directory not recorded'));
   const actions = element('div', 'inspect-actions');
-  if (c.origin === 'local') {
-    actions.append(button('▶ Chat here', 'button primary', () => openTerminal(c.id)), button('↗ Terminal', 'button', async () => { await api.resumeExternal(c.id); toast('Conversation opened in your terminal.'); }));
+  if (c.handoff) { actions.append(button('Release handoff…', 'button', async () => { const lib = await api.handoffRelease(c.id); if (lib) { updateLibrary(lib); renderInspector(); } })); } else if (['local', 'remote'].includes(c.origin)) {
+    actions.append(button(c.origin === 'remote' ? '▶ Resume remotely' : '▶ Chat here', 'button primary', () => openTerminal(c.id)), button('↗ Terminal', 'button', async () => { await api.resumeExternal(c.id); toast('Conversation opened in your terminal.'); }));
   } else actions.append(button('Restore files', 'button', () => operation('Restoring context files…', async () => { const result = await api.restoreContext(c.id); if (result) toast(`${result.count} files restored to ${result.path}`); })));
-  actions.append(button('Show file', 'button', () => api.revealContext(c.id)), button('Export', 'button', () => exportContexts([c.id])));
-  head.append(actions); pane.append(head);
+  if (c.origin === 'remote' && !c.handoff) actions.append(button('⇥ Resume here', 'button', () => resumeHere(c.id)));
+  else if (c.origin !== 'remote') actions.append(button('Show file', 'button', () => api.revealContext(c.id)), button('Export', 'button', () => exportContexts([c.id])));
+  head.append(element('p', 'machine-label', `${c.origin === 'remote' ? 'SSH · ' : 'This machine · '}${c.machine || ''}${c.offline ? ' · Offline snapshot' : ''}`)); if (c.handoff) head.append(element('p', 'notice', `Handed off to ${c.handoff.target}. This source copy is retained as a backup and cannot resume through GPT Manager until explicitly released.`)); if (c.copies?.length) head.append(element('p', 'notice', 'Other copies exist on ' + c.copies.join(', ') + '. Avoid running the same conversation in multiple places.')); head.append(actions); pane.append(head);
   const tabs = element('div', 'tabs'); for (const [id, title] of [['messages', 'Conversation'], ['files', 'Original files'], ['metadata', 'Details & notes']]) tabs.append(button(title, `tab ${state.tab === id ? 'active' : ''}`, () => { state.tab = id; renderInspector(); })); pane.append(tabs);
   const body = element('div', 'inspect-body'); pane.append(body);
   if (loading) { body.append(element('div', 'empty', 'Loading conversation…')); return; }
@@ -109,6 +110,7 @@ function renderMessages(body) {
   }); next.append(b); body.append(next); }
 }
 function renderMetadata(body, c) {
+  if (c.origin === 'remote') { body.append(element('p', 'notice', `Stored on ${c.machine}: ${c.path}. Remote browsing is read-only. Resume remotely to keep working there, or choose Resume here for a handoff.`)); return; }
   for (const [name, value] of [['Session ID', c.sessionId], ['Source file', c.path], ['Provider root', c.root], ['Model', c.model || 'Not recorded'], ['Updated', c.updated]]) { const field = element('div', 'field'); field.append(element('label', '', name), element('div', 'meta-value', value)); body.append(field); }
   const folderActions = element('div', 'field folder-actions');
   folderActions.append(element('label', '', 'Move to another folder'), element('p', 'muted', 'Change the folder used when launching this context, or relocate its original files. Project source files and historical path references are not rewritten.'));
@@ -128,7 +130,8 @@ function renderMetadata(body, c) {
 }
 function renderLocations() {
   const page = $('#locations-view'); page.replaceChildren(); const intro = element('div', 'section-intro'); intro.append(element('h2', '', 'Connected stores')); const controls = element('div'), select = element('select'); select.setAttribute('aria-label', 'Provider for custom location'); for (const [id, name] of Object.entries(providers)) { const option = element('option', '', name); option.value = id; select.append(option); } controls.append(select, document.createTextNode(' '), button('+ Add location', 'button', async () => { const lib = await api.addRoot(select.value); if (lib) updateLibrary(lib); })); intro.append(controls); page.append(intro);
-  for (const loc of state.library.locations) { const card = element('div', 'location-card'), content = element('div'), h = element('h3'); h.append(providerLabel(loc.provider)); content.append(h, element('code', '', loc.path)); card.append(content, element('span', `location-status ${loc.exists ? '' : 'missing'}`, loc.exists ? `${loc.count} contexts · connected` : 'Not found')); page.append(card); }
+  renderSshLocations(page);
+  for (const loc of state.library.locations) { const card = element('div', 'location-card'), content = element('div'), h = element('h3'); h.append(providerLabel(loc.provider)); content.append(h, element('p', 'muted', loc.machine || state.library.machine?.name || 'This machine'), element('code', '', loc.path)); card.append(content, element('span', `location-status ${loc.exists ? '' : 'missing'}`, loc.exists ? `${loc.count} contexts · connected` : 'Not found')); page.append(card); }
   page.append(element('p', 'muted', `Manager data: ${state.library.dataDir || ''}`));
   page.append(element('p', 'muted', 'Store roots: Codex home · Claude projects directory · Gemini tmp directory · Antigravity data directory. Discovery is read-only.'));
 }
@@ -139,7 +142,7 @@ function renderTransfer() {
   }
   page.append(grid); const note = element('div', 'transfer-note'); note.append(element('strong', '', 'A portable archive. A deliberate restore.'), element('div', '', 'Send the .gptctx file by a channel you trust. It contains private chats and is not encrypted. Import verifies checksums and keeps a separate library copy. Restore never replaces existing files. Project source, credentials, global provider indexes, and settings are not included. Native resume may need provider-specific setup; contexts are not converted between providers.')); page.append(note);
 }
-async function exportContexts(ids) { return operation('Packing original files and computing checksums…', async () => { const result = await api.exportBundle(ids); if (result) toast(`Exported ${result.count} contexts · ${bytes(result.size)} · ${result.path}`); }); }
+async function exportContexts(ids) { if (ids.some(id => state.library.contexts.find(c => c.id === id)?.origin === 'remote')) throw new Error('For SSH contexts, use Resume here to hand off the conversation, or export on the source machine.'); return operation('Packing original files and computing checksums…', async () => { const result = await api.exportBundle(ids); if (result) toast(`Exported ${result.count} contexts · ${bytes(result.size)} · ${result.path}`); }); }
 async function importPreview() { await operation('Validating archive and checksums…', async () => { const preview = await api.chooseImport(); if (!preview) return; const body = $('#import-preview'); body.replaceChildren(element('div', 'muted', `${preview.contexts.length} contexts · ${preview.files} files · ${bytes(preview.size)}`)); for (const c of preview.contexts) body.append(element('div', 'preview-row', `${providers[c.provider]} / ${c.title}`)); $('#import-dialog').showModal(); }); }
 $('#navigation').addEventListener('click', e => { const button = e.target.closest('[data-view]'); if (button) { state.view = button.dataset.view; render(); } });
 $('#search').oninput = e => { state.query = e.target.value; renderRows(); updateSelection(); };
@@ -161,7 +164,7 @@ async function openTerminal(id) {
   const term = new Terminal({ cursorBlink: true, fontFamily: 'monospace', fontSize: 12, scrollback: 5000, theme: { background: '#111610', foreground: '#d7e3cf', cursor: '#d3f49a' } });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
   const host = element('div', 'terminal-host'); $('#terminal-content').append(host); term.open(host);
-  terminalSessions.set(id, { term, fit, host, token: session.token, title: c.title, exited: false });
+  terminalSessions.set(id, { term, fit, host, token: session.token, title: `${session.machine || c.machine || 'Local'} · ${c.title}`, exited: false });
   term.onData(data => api.terminalInput({ token: session.token, data }));
   term.onResize(({ cols, rows }) => api.terminalResize({ token: session.token, cols, rows }));
   showTerminal(id); await api.terminalAttach(session.token);
@@ -299,3 +302,56 @@ setInterval(async () => {
   try { acceptCloud(await api.cloudStatus()); } catch (e) { toast(e.message, true); } finally { cloudPolling = false; }
 }, 1000);
 setInterval(() => run(async () => acceptCloud(await api.cloudTick())), 60000);
+
+function transientDialog(title) {
+  const dialog = element('dialog'), heading = element('h2', '', title);
+  const close = button('×', 'dialog-close', () => dialog.close()); close.setAttribute('aria-label', 'Close');
+  dialog.append(close, heading); dialog.addEventListener('close', () => dialog.remove()); document.body.append(dialog);
+  return dialog;
+}
+function renderSshLocations(page) {
+  const heading = element('div', 'section-intro'), controls = element('div', 'ssh-actions');
+  heading.append(element('h2', '', 'SSH endpoints'));
+  controls.append(button('+ Add SSH endpoint', 'button', () => addSshDialog()), button('Scan local network', 'button', scanLanDialog)); heading.append(controls); page.append(heading);
+  page.append(element('p', 'muted', 'Remote contexts stay on their host until you choose Resume here. SSH uses your existing config, keys and agent; first establish host trust through your system SSH client.'));
+  for (const endpoint of state.library.sshEndpoints || []) {
+    const card = element('div', 'location-card'), content = element('div'), actions = element('div', 'ssh-actions');
+    content.append(element('h3', '', endpoint.label), element('code', '', endpoint.host), element('p', 'muted', endpoint.machine ? `Machine: ${endpoint.machine.name} · ${endpoint.machine.home}` : 'Not connected yet'));
+    if (endpoint.error) content.append(element('p', 'notice', endpoint.error));
+    actions.append(element('span', 'location-status', endpoint.connected ? 'Connected' : 'Offline'), button('Refresh', 'button', () => operation('Reading SSH endpoint…', async () => updateLibrary(await api.sshRefresh({ id: endpoint.id })))), button('Remove', 'quiet', async () => updateLibrary(await api.sshRemove({ id: endpoint.id }))));
+    card.append(content, actions); page.append(card);
+  }
+}
+async function addSshDialog(initialHost = '') {
+  const aliases = await api.sshAliases(), dialog = transientDialog('Add SSH endpoint'), form = element('form');
+  const hostField = element('div', 'field'), hostLabel = element('label', '', 'SSH alias or user@hostname'), host = element('input'); host.id = 'ssh-host'; hostLabel.htmlFor = host.id; host.required = true; host.value = initialHost; host.placeholder = 'workstation or user@192.168.1.20'; host.setAttribute('list', 'ssh-aliases');
+  const list = element('datalist'); list.id = 'ssh-aliases'; for (const alias of aliases) { const option = element('option'); option.value = alias; list.append(option); } hostField.append(hostLabel, host, list);
+  if (aliases.length) { const picker = element('select'); picker.setAttribute('aria-label', 'Saved SSH aliases'); const empty = element('option', '', 'Choose an alias from SSH config…'); empty.value = ''; picker.append(empty); for (const alias of aliases) { const option = element('option', '', alias); option.value = alias; picker.append(option); } picker.onchange = () => { if (picker.value) host.value = picker.value; }; hostField.append(picker); }
+  const labelField = element('div', 'field'), labelTitle = element('label', '', 'Display name (optional)'), label = element('input'); label.id = 'ssh-label'; labelTitle.htmlFor = label.id; label.maxLength = 100; labelField.append(labelTitle, label);
+  const submit = element('button', 'button primary', 'Add and connect'); submit.type = 'submit'; const status = element('p', 'muted'); status.setAttribute('role', 'status');
+  form.append(hostField, labelField, element('p', 'muted', 'Use ~/.ssh/config for custom ports, jump hosts and identity files. Connections require key/agent authentication and a trusted host key. The remote host needs Python 3.10+ and its provider CLI.'), submit, status);
+  form.onsubmit = event => { event.preventDefault(); run(async () => { submit.disabled = true; status.textContent = 'Connecting and discovering remote contexts…'; try { updateLibrary(await api.sshAdd({ host: host.value, label: label.value })); dialog.close(); } catch (error) { status.textContent = error.message; } finally { submit.disabled = false; } }); };
+  dialog.append(form); dialog.showModal(); host.focus();
+}
+async function scanLanDialog() {
+  const networks = await api.localNetworks(), dialog = transientDialog('Find SSH servers nearby');
+  dialog.append(element('p', '', 'Scan a directly attached local subnet for SSH on port 22. At most 256 addresses are checked. No login attempts or host-key approvals are made.'));
+  if (!networks.length) { dialog.append(element('p', 'notice', 'No supported local IPv4 subnet was found. Add an SSH alias or hostname instead.')); dialog.showModal(); return; }
+  const select = element('select'); select.setAttribute('aria-label', 'Local subnet');
+  for (const network of networks) { const option = element('option', '', `${network.interface} · ${network.cidr}`); option.value = network.cidr; select.append(option); }
+  const results = element('div'), status = element('p', 'muted'); status.setAttribute('role', 'status');
+  const scan = button('Scan subnet', 'button primary', async () => { scan.disabled = true; results.replaceChildren(); status.textContent = 'Checking SSH servers…'; try { const result = await api.scanNetwork({ cidr: select.value }); status.textContent = `${result.hosts.length} SSH server(s) found. Servers using other ports or blocking discovery will not appear.`; for (const server of result.hosts) { const row = element('div', 'location-card'); row.append(element('code', '', server.host), button('Add endpoint', 'button', async () => { dialog.close(); await addSshDialog(server.host); })); results.append(row); } } finally { scan.disabled = false; } });
+  dialog.append(select, scan, status, results); dialog.showModal();
+}
+async function resumeHere(id) {
+  const dialog = transientDialog('Resume on this machine'), status = element('p', '', 'Choose a project folder in the next window.'), meter = element('progress', 'setup-progress'); meter.setAttribute('aria-label', 'Context handoff');
+  dialog.querySelector('.dialog-close').remove(); dialog.addEventListener('cancel', event => event.preventDefault()); status.id = 'handoff-status'; status.setAttribute('role', 'status'); dialog.append(status, meter); dialog.showModal();
+  try {
+    const result = await api.resumeHere(id);
+    if (!result) return;
+    updateLibrary(result.library); state.view = 'all'; render(); await selectContext(result.id);
+    if (result.warning) toast(result.warning, true);
+    await openTerminal(result.id);
+  } finally { dialog.close(); }
+}
+api.onHandoffProgress(message => { const status = $('#handoff-status'); if (status) status.textContent = message; });

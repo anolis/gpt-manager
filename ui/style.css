@@ -19,3 +19,4 @@
   .sidebar-bottom{padding-top:24px}
   .version{padding-top:14px;margin-top:14px}
 }
+.ssh-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.location-card>div:first-child{min-width:0}.location-card .ssh-actions{flex-shrink:0}.machine-label{font:10px var(--mono);color:var(--accent);overflow-wrap:anywhere}.row-bottom{flex-wrap:wrap}#ssh-host+ datalist+select{margin-top:10px;width:100%;padding:10px}

@@ -5,6 +5,7 @@ const readline = require('node:readline');
 const { randomUUID } = require('node:crypto');
 
 function executable(name, env = process.env) {
+  if (path.isAbsolute(name)) { fs.accessSync(name, fs.constants.X_OK); return name; }
   for (const folder of (env.PATH || '').split(path.delimiter)) {
     if (!folder || !path.isAbsolute(folder)) continue;
     const file = path.join(folder, name);
@@ -30,6 +31,14 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
   async function config(id) {
     const context = (await rpc('library')).contexts.find(c => c.id === id);
     if (!context) throw new Error('Context not available');
+    if (context.copies?.length) {
+      const answer = await dialog.showMessageBox(win, { type: 'warning', message: `Resume on ${context.machine}?`, detail: `Other copies of this session were found on: ${context.copies.join(', ')}. Stop any running copies before continuing. GPT Manager cannot lock independent copies on other machines.`, buttons: ['Cancel', 'Resume this copy'], defaultId: 0, cancelId: 0 });
+      if (answer.response !== 1) return null;
+    }
+    if (context.origin === 'remote') {
+      const remote = await rpc('ssh_resume', { id });
+      return { command: executable('ssh'), args: remote.args, env: { ...process.env }, cwd: app.getPath('home'), machine: remote.machine };
+    }
     const command = resumeCommand(context);
     let cwd = context.project || folders.get(id);
     if (!cwd || !path.isAbsolute(cwd) || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
@@ -38,7 +47,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
       folders.set(id, cwd);
     }
     if (context.provider === 'codex') command.args.push('--cd', cwd);
-    return { ...command, cwd };
+    return { command: executable(process.env.GPT_MANAGER_PYTHON || 'python3'), args: [path.join(__dirname, '../backend/session_lock.py'), context.provider, context.sessionId, cwd, command.command, ...command.args], env: command.env, cwd, machine: context.machine };
   }
   function emit(session, channel, value) {
     if (!session.attached) { session.buffer.push([channel, value]); if (session.buffer.length > 256) session.buffer.shift(); }
@@ -60,7 +69,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
       try { const value = JSON.parse(line); if (value.data) emit(session, 'terminalData', { data: value.data }); if (value.exit !== undefined) session.exitCode = value.exit; } catch {}
     });
     child.on('exit', code => { session.exited = true; emit(session, 'terminalExit', { code: session.exitCode ?? code }); });
-    return { token, cwd: cfg.cwd };
+    return { token, cwd: cfg.cwd, machine: cfg.machine };
   });
   register('terminalAttach', token => { const s = sessions.get(token); if (!s) return; s.attached = true; for (const [channel, value] of s.buffer) emit(s, channel, value); s.buffer = []; });
   register('terminalInput', ({ token, data }) => { const s = sessions.get(token); if (!s || s.exited || typeof data !== 'string' || data.length > 100000) return; s.child.stdin.write(JSON.stringify({ type: 'input', data }) + '\n'); });

@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const call = name => (...args) => ipcRenderer.invoke(name, ...args);
 contextBridge.exposeInMainWorld('manager', {
+  sshAdd: call('sshAdd'), sshRemove: call('sshRemove'), sshRefresh: call('sshRefresh'), resumeHere: call('resumeHere'),
+  sshAliases: call('sshAliases'), localNetworks: call('localNetworks'), scanNetwork: call('scanNetwork'), handoffRelease: call('handoffRelease'),
+  onHandoffProgress: listener => { const handler = (_event, message) => listener(message); ipcRenderer.on('handoffProgress', handler); return () => ipcRenderer.removeListener('handoffProgress', handler); },
   terminalStart: call('terminalStart'), terminalAttach: call('terminalAttach'), terminalInput: call('terminalInput'), terminalResize: call('terminalResize'), terminalClose: call('terminalClose'), resumeExternal: call('resumeExternal'),
   onTerminalData: listener => { const handler = (_event, data) => listener(data); ipcRenderer.on('terminalData', handler); return () => ipcRenderer.removeListener('terminalData', handler); },
   onTerminalExit: listener => { const handler = (_event, data) => listener(data); ipcRenderer.on('terminalExit', handler); return () => ipcRenderer.removeListener('terminalExit', handler); },

@@ -9,6 +9,9 @@ from pathlib import Path
 from manager import Manager
 from cloud import CloudSync
 from relocate import project_folder, plan_move, move_files
+from remote import RemoteLocations, ssh_aliases
+from teleport import Teleport, git_check
+from network import local_networks, scan_network
 
 p = argparse.ArgumentParser()
 p.add_argument('--data', required=True)
@@ -17,10 +20,19 @@ args = p.parse_args()
 manager = Manager(args.home, args.data)
 manager_lock = threading.RLock()
 cloud = CloudSync(manager, manager_lock)
+remote = RemoteLocations(manager, progress=lambda message: print(json.dumps({'event': 'handoffProgress', 'message': message}), flush=True))
+teleport = Teleport(remote)
 signal.signal(signal.SIGTERM, lambda *_: (cloud.close(), sys.exit(0)))
 cloud_methods = {f'cloud_{name}': getattr(cloud, name) for name in ('status', 'connect', 'answer', 'cancel', 'folder', 'configure', 'configure_google', 'disconnect', 'sync', 'tick')}
 methods = {name: getattr(manager, name) for name in ('scan', 'library', 'detail', 'annotate', 'add_root', 'files', 'export', 'preview', 'import_archive', 'restore')}
 methods.update({'project_folder': lambda **params: project_folder(manager, **params), 'plan_move': lambda **params: plan_move(manager, **params), 'move_files': lambda **params: move_files(manager, **params)})
+methods.update({'scan': remote.scan, 'library': remote.library,
+                'detail': lambda **params: remote.read('detail', **params),
+                'files': lambda **params: remote.read('files', **params),
+                'ssh_add': remote.add, 'ssh_remove': remote.remove, 'ssh_refresh': remote.refresh,
+                'ssh_resume': remote.resume, 'ssh_aliases': ssh_aliases,
+                'handoff_release': remote.release, 'teleport': teleport.run, 'git_check': git_check,
+                'local_networks': local_networks, 'scan_network': scan_network})
 for line in sys.stdin:
     request = {}
     try:
@@ -37,6 +49,8 @@ for line in sys.stdin:
                 result = method(**request.get('params', {}))
         if request.get('method') == 'move_files':
             cloud.remap_context(result['previousId'], result['id'])
+        if isinstance(result, dict) and 'contexts' in result and 'locations' in result:
+            result = remote.library()
         response = {'id': request['id'], 'result': result}
     except Exception as e:
         response = {'id': request.get('id'), 'error': str(e)}
