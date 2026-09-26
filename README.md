@@ -65,6 +65,21 @@ Archives are **not encrypted** and contain private conversations and potentially
 
 A native provider may need its index rebuilt or a matching project checkout before it can resume a restored session. Original project paths are preserved, not rewritten. In particular, Antigravity has shared summary/index state beyond the per-conversation database. **Archive round-trips and file restoration are tested; seamless native resume after migration is not guaranteed.** Backup whole provider installations separately when you need complete application-state disaster recovery.
 
+## Catch up: daily and weekly work recaps
+
+Open **Catch up** to reconstruct your own working context across projects. Choose **Yesterday**, **Today**, **Last 7 days**, **Last week (Monday–Sunday)**, or custom dates up to 93 days. Day boundaries use the desktop’s local timezone, including daylight-saving changes.
+
+1. Choose **Review activity**. GPT Manager reads dated user/assistant excerpts from local native and imported conversations. Optionally include connected SSH histories. No model is called at this step.
+2. Review the excerpts and choose which conversations to include. Matching snapshots from imported/teleported copies are deduplicated. A missing timestamp is reported and excluded; modification dates are never treated as evidence of work on that day.
+3. Select an installed, authenticated **Codex** or **Claude** CLI, optionally specify a model, and choose **Generate recap**. Selected excerpts and their project/title/machine labels are sent through that provider account, subject to its normal usage limits/charges. Both generators can summarize histories from all four supported context providers.
+4. Read the project summaries, decisions/outcomes, open work and suggested next steps. Links open the source conversations in the inspector. Saved recaps retain their reviewed excerpts, date range, generator and coverage warnings. You can copy or delete a saved recap.
+
+Generation uses a separate temporary working directory and does not resume/edit the original conversations. Codex uses ephemeral execution, read-only sandboxing, ignored user config, and disabled shell/web/agent features; Claude uses safe mode, no tools/MCP, and disabled session persistence. Recent CLI versions supporting these flags are required; sign in through the provider CLI first. Managed provider policies still apply. See [Codex noninteractive execution](https://developers.openai.com/codex/noninteractive) and [Claude CLI flags](https://code.claude.com/docs/en/cli-reference). The app checks returned project/source references before saving. This does not verify every generated claim: summaries remain AI interpretations of the excerpts, not a complete activity audit.
+
+Coverage is deliberately bounded: up to 250 histories and 128 MiB per review, the latest 4 MiB of each JSONL history (JSON files must fit within 4 MiB), up to 6,000 excerpt characters per conversation, and at most 24 conversations / 100,000 input characters per recap. Earlier activity outside a sampled tail can be missing; coverage warnings appear in both preview and saved recap. Raw tool output, undated messages and opaque provider stores are not used. Recaps are on-demand, not scheduled, and local-model generation is not implemented yet.
+
+Saved recaps live in `<manager data>/catch-up` with private directory/file permissions. They include conversation excerpts, are not encrypted, and are not included in context exports or cloud sync. Preview data remains in memory. Cancellation stops the summary subprocess; a five-minute timeout and bounded output prevent a stuck provider from running indefinitely. Tests cover actual subprocess orchestration using a synthetic provider, date/DST boundaries, deduplication, citation validation, persistence and cancellation. Live-account summary generation still needs user validation.
+
 ## SSH context locations and Resume here
 
 Open **Context locations → Add SSH endpoint**. Choose a named alias from `~/.ssh/config` (including `Include` files), or enter `user@hostname`. Wildcard/negated Host patterns are not offered as aliases. OpenSSH remains responsible for ports, jump hosts, identities and other configuration.

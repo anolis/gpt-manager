@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const call = name => (...args) => ipcRenderer.invoke(name, ...args);
 contextBridge.exposeInMainWorld('manager', {
+  catchupStatus: call('catchupStatus'), catchupPrepare: call('catchupPrepare'), catchupGenerate: call('catchupGenerate'), catchupCancel: call('catchupCancel'), catchupHistory: call('catchupHistory'), catchupGet: call('catchupGet'), catchupDelete: call('catchupDelete'),
   sshAdd: call('sshAdd'), sshRemove: call('sshRemove'), sshRefresh: call('sshRefresh'), resumeHere: call('resumeHere'),
   sshAliases: call('sshAliases'), localNetworks: call('localNetworks'), scanNetwork: call('scanNetwork'), handoffRelease: call('handoffRelease'),
   onHandoffProgress: listener => { const handler = (_event, message) => listener(message); ipcRenderer.on('handoffProgress', handler); return () => ipcRenderer.removeListener('handoffProgress', handler); },

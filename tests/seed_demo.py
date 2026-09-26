@@ -1,6 +1,7 @@
 """Synthetic contexts for desktop smoke tests; never points at live provider stores."""
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
@@ -31,9 +32,26 @@ for provider, title, name in contexts:
         path = root / '.gemini/antigravity-cli/brain/demo-agy/.system_generated/logs/transcript.jsonl'
         data = [{'type': 'USER_INPUT', 'content': title}, {'type': 'PLANNER_RESPONSE', 'content': 'I will map the provider stores and preserve their original files.'}]
     path.parent.mkdir(parents=True, exist_ok=True)
+    for row in data.get('messages', []) if isinstance(data, dict) else data:
+        row['timestamp'] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     path.write_text(json.dumps(data) if isinstance(data, dict) else ''.join(json.dumps(x) + '\n' for x in data))
 # A fake interactive provider verifies PTY wiring without resuming or modifying real conversations.
 bin_dir = root / 'bin'; bin_dir.mkdir(exist_ok=True)
 cli = bin_dir / 'codex'
-cli.write_text('#!/usr/bin/env python3\nimport os,sys\nprint("PTY_READY " + os.getcwd() + " " + " ".join(sys.argv[1:]), flush=True)\nfor line in sys.stdin:\n print("ECHO:"+line.strip(),flush=True)\n if line.strip()=="exit": break\n')
+cli.write_text('''#!/usr/bin/env python3
+import os,sys,json
+from pathlib import Path
+if len(sys.argv)>1 and sys.argv[1]=='exec':
+ text=sys.stdin.read()
+ evidence=json.loads(text.split('BEGIN QUOTED EVIDENCE\\n',1)[1].split('\\nEND QUOTED EVIDENCE',1)[0])
+ groups={}
+ for source in evidence['sources']: groups.setdefault(source['projectId'],[]).append(source['sourceId'])
+ result={'overview':'You explored the observatory workflow and reviewed its control service. The next step is to reconnect the implementation details with the observation plan.','projects':[{'projectId':key,'summary':'You discussed the observation plan, reviewed the telescope controls, and explored how to keep the next steps organized.','decisions':['The control service was reported ready for review.'],'openLoops':['The observation timeline still needs a concrete implementation plan.'],'nextSteps':['Suggested: reopen the latest conversation and review the current project state.'],'sourceIds':ids} for key,ids in groups.items()]}
+ Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps(result))
+ sys.exit(0)
+print("PTY_READY " + os.getcwd() + " " + " ".join(sys.argv[1:]), flush=True)
+for line in sys.stdin:
+ print("ECHO:"+line.strip(),flush=True)
+ if line.strip()=="exit": break
+''')
 cli.chmod(0o700)

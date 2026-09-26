@@ -72,6 +72,13 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(result['messages'][0]['content'], 'Remote conversation')
         self.assertFalse((self.host / '.local').exists(), 'Read-only scan created lock storage')
 
+    def test_remote_activity_uses_same_timestamp_filter(self):
+        rows = [json.loads(line) for line in self.source.read_text().splitlines()]
+        rows[-1]['timestamp'] = '2026-09-25T12:00:00Z'
+        self.source.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        result = self.remote.read('activity', self.context['id'], start='2026-09-25T00:00:00Z', end='2026-09-26T00:00:00Z')
+        self.assertEqual(result['messages'][0]['content'], 'Remote conversation')
+
     def test_host_and_shell_argument_validation(self):
         for host in ('-oProxyCommand=evil', 'host;touch /tmp/x', '$(id)', 'a b', ''):
             with self.assertRaises(ValueError): ssh_arguments(host, {'operation': 'scan'})

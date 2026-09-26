@@ -3,8 +3,8 @@ const api = window.manager;
 const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
 const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
-const titles = { all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
-const descriptions = { all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
+const titles = { catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
+const descriptions = { catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
 function button(text, className, handler) { const b = element('button', className, text); b.addEventListener('click', () => run(handler)); return b; }
 function bytes(n) { if (!n) return '0 B'; const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024))); return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${['B', 'KB', 'MB', 'GB'][i]}`; }
@@ -37,9 +37,11 @@ function providerLabel(provider) { const span = element('span', 'provider-label'
 function render() {
   $('#crumb').textContent = titles[state.view]; $('#page-title').textContent = titles[state.view]; $('#page-description').textContent = descriptions[state.view];
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
-  const library = !['locations', 'transfer', 'cloud'].includes(state.view);
+  const library = !['locations', 'transfer', 'cloud', 'catchup'].includes(state.view);
   $('#library-view').classList.toggle('hidden', !library); $('#stats').classList.toggle('hidden', !library);
   $('#cloud-view').classList.toggle('hidden', state.view !== 'cloud');
+  $('#catchup-view').classList.toggle('hidden', state.view !== 'catchup');
+  if (state.view === 'catchup') renderCatchUp();
   $('#locations-view').classList.toggle('hidden', state.view !== 'locations'); $('#transfer-view').classList.toggle('hidden', state.view !== 'transfer');
   $('#nav-total').textContent = state.library.contexts.filter(c => !c.archived).length;
   const stats = $('#stats'); stats.replaceChildren();
@@ -355,3 +357,132 @@ async function resumeHere(id) {
   } finally { dialog.close(); }
 }
 api.onHandoffProgress(message => { const status = $('#handoff-status'); if (status) status.textContent = message; });
+
+// Catch-up forms remain mounted during job polling, preserving focus and source choices.
+let catchupState = { job: null, preview: null, providers: [] }, catchupLoaded = false, catchupLoading = false;
+let catchupPreviewId = null, catchupSeenJob = null, catchupHistory = [], catchupRecord = null;
+const catchupSelection = new Set();
+function catchupRange(preset, from, to, current = new Date()) {
+  const end = new Date(current), start = new Date(current); start.setHours(0, 0, 0, 0);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const labels = { today: 'Today', yesterday: 'Yesterday', seven: 'Last 7 days', week: 'Last week (Mon–Sun)' };
+  if (preset === 'yesterday') { end.setHours(0, 0, 0, 0); start.setDate(start.getDate() - 1); }
+  else if (preset === 'seven') start.setDate(start.getDate() - 6);
+  else if (preset === 'week') { start.setDate(start.getDate() - (start.getDay() + 6) % 7); end.setTime(start.getTime()); start.setDate(start.getDate() - 7); }
+  else if (preset === 'custom') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('Choose both dates.');
+    const [fy, fm, fd] = from.split('-').map(Number), [ty, tm, td] = to.split('-').map(Number);
+    start.setFullYear(fy, fm - 1, fd); end.setFullYear(ty, tm - 1, td); end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + 1);
+  }
+  return { start: start.toISOString(), end: end.toISOString(), label: `${labels[preset] || `${from} through ${to}`} · ${zone}` };
+}
+function renderCatchUp() {
+  const page = $('#catchup-view');
+  if (!page.childElementCount) {
+    const form = element('form', 'catchup-controls'), period = element('select'); period.id = 'catchup-period'; period.setAttribute('aria-label', 'Activity period');
+    for (const [id, label] of [['yesterday', 'Yesterday'], ['today', 'Today'], ['seven', 'Last 7 days'], ['week', 'Last week (Mon–Sun)'], ['custom', 'Custom dates']]) { const option = element('option', '', label); option.value = id; period.append(option); }
+    const dates = element('div', 'catchup-dates hidden'); dates.id = 'catchup-dates';
+    for (const [id, title] of [['from', 'From'], ['to', 'Through']]) { const label = element('label', '', title), input = element('input'); input.type = 'date'; input.id = 'catchup-' + id; label.append(input); dates.append(label); }
+    period.onchange = () => dates.classList.toggle('hidden', period.value !== 'custom');
+    const remoteLabel = element('label', 'catchup-toggle'), remote = element('input'); remote.type = 'checkbox'; remote.id = 'catchup-remote'; remoteLabel.append(remote, document.createTextNode('Include connected SSH histories'));
+    const review = element('button', 'button primary', 'Review activity'); review.id = 'catchup-review'; review.type = 'submit'; form.append(period, dates, remoteLabel, review);
+    form.onsubmit = event => { event.preventDefault(); run(async () => { catchupRecord = null; $('#catchup-result').replaceChildren(); acceptCatchUp(await api.catchupPrepare({ ...catchupRange(period.value, $('#catchup-from').value, $('#catchup-to').value), include_remote: remote.checked })); }); };
+    const status = element('div'); status.id = 'catchup-status'; status.setAttribute('role', 'status');
+    const layout = element('div', 'catchup-layout'), main = element('div'), preview = element('div'), result = element('div'), history = element('aside', 'catchup-history'); preview.id = 'catchup-preview'; result.id = 'catchup-result'; history.id = 'catchup-history';
+    main.append(preview, result); layout.append(main, history);
+    page.append(form, element('p', 'muted', 'Dates use your local timezone. Review reads conversation excerpts; Generate sends only your chosen excerpts and their labels to the selected provider. Provider usage limits and charges apply.'), status, layout);
+  }
+  paintCatchUp();
+  if (!catchupLoaded && !catchupLoading) {
+    catchupLoading = true;
+    run(async () => { try { const [status, history] = await Promise.all([api.catchupStatus(), api.catchupHistory()]); catchupHistory = history; catchupLoaded = true; acceptCatchUp(status); renderCatchupHistory(); } finally { catchupLoading = false; } });
+  }
+}
+function acceptCatchUp(value) {
+  catchupState = value;
+  if (value.preview?.id !== catchupPreviewId) {
+    catchupPreviewId = value.preview?.id;
+    catchupSelection.clear(); for (const source of value.preview?.sources || []) catchupSelection.add(source.sourceId);
+    renderCatchupPreview();
+  }
+  paintCatchUp();
+  const job = value.job;
+  if (job && job.status === 'complete' && job.id !== catchupSeenJob) {
+    catchupSeenJob = job.id;
+    if (job.result?.summaryId) run(async () => { catchupRecord = await api.catchupGet({ id: job.result.summaryId }); catchupHistory = await api.catchupHistory(); renderCatchupResult(); renderCatchupHistory(); });
+  }
+}
+function paintCatchUp() {
+  if (!$('#catchup-status')) return;
+  const running = catchupState.job?.status === 'running', status = $('#catchup-status');
+  $('#catchup-review').disabled = running;
+  document.querySelectorAll('#catchup-preview input, #catchup-preview select, #catchup-preview button').forEach(control => control.disabled = running);
+  const generate = $('#catchup-generate'); if (generate) generate.disabled = running || !catchupSelection.size || !$('#catchup-provider').value;
+  const job = catchupState.job;
+  if (running) {
+    if (!status.querySelector('progress')) {
+      const progress = element('progress', 'setup-progress'); progress.setAttribute('aria-label', 'Catch-up progress');
+      status.replaceChildren(element('p', 'catchup-job-message'), progress, button('Cancel', 'quiet', async () => acceptCatchUp(await api.catchupCancel())));
+    }
+    status.querySelector('.catchup-job-message').textContent = job.message;
+  } else status.replaceChildren(...(job?.status === 'error' ? [element('p', 'notice', job.error)] : job?.status === 'canceled' ? [element('p', 'muted', 'Canceled. No new recap was generated.')] : []));
+}
+function renderCatchupPreview() {
+  const parent = $('#catchup-preview'); if (!parent) return; parent.replaceChildren(); const preview = catchupState.preview;
+  if (!preview) { parent.append(element('div', 'empty', 'Choose a period to find the threads you left open.')); return; }
+  parent.append(element('h2', '', preview.label), element('p', 'muted', `${preview.sources.length} conversations with dated activity · ${preview.scanned} histories checked · ${preview.duplicates} duplicate snapshots omitted`));
+  for (const warning of preview.warnings) parent.append(element('p', 'notice', warning));
+  if (!preview.sources.length) { parent.append(element('p', 'empty', 'No dated activity found in the sampled histories. Try another date range, refresh Context locations, or include connected SSH histories.')); return; }
+  const selectAll = button('Select all', 'quiet', () => { for (const source of preview.sources) catchupSelection.add(source.sourceId); renderCatchupPreview(); });
+  const selectNone = button('Clear selection', 'quiet', () => { catchupSelection.clear(); renderCatchupPreview(); }); parent.append(selectAll, selectNone);
+  const sources = element('div', 'catchup-sources');
+  for (const source of preview.sources) {
+    const row = element('article', 'catchup-source'), label = element('label'), check = element('input'); check.type = 'checkbox'; check.checked = catchupSelection.has(source.sourceId); check.onchange = () => { check.checked ? catchupSelection.add(source.sourceId) : catchupSelection.delete(source.sourceId); paintCatchUp(); };
+    label.append(check, document.createTextNode(source.title)); row.append(label, element('p', 'muted', `${providers[source.provider]} · ${source.machine} · ${source.project || 'Project not recorded'}`));
+    const detail = element('details'); detail.append(element('summary', '', `Review excerpts · ${source.messages.length} of ${source.matched} matching messages${source.partial ? ' · sampled' : ''}`));
+    for (const message of source.messages) { const item = element('div', 'catchup-excerpt'); item.append(element('small', 'muted', `${message.role} · ${new Date(message.timestamp).toLocaleString()}`), element('pre', '', message.content)); detail.append(item); }
+    row.append(detail); sources.append(row);
+  }
+  parent.append(sources);
+  const controls = element('div', 'catchup-generate'), provider = element('select'); provider.id = 'catchup-provider'; provider.setAttribute('aria-label', 'Summary provider');
+  for (const option of catchupState.providers) { const item = element('option', '', `${option.id === 'codex' ? 'Codex' : 'Claude'}${option.available ? '' : ' — not installed'}`); item.value = option.available ? option.id : ''; item.disabled = !option.available; provider.append(item); }
+  const model = element('input'); model.id = 'catchup-model'; model.placeholder = 'Model (optional)'; model.setAttribute('aria-label', 'Summary model, optional');
+  const generate = button('Generate recap', 'button primary', async () => acceptCatchUp(await api.catchupGenerate({ preview_id: preview.id, source_ids: [...catchupSelection], provider: provider.value, model: model.value.trim() }))); generate.id = 'catchup-generate'; provider.onchange = paintCatchUp;
+  controls.append(provider, model, generate); parent.append(controls, element('p', 'muted', 'Uses a separate summary session. Your original conversations are not resumed or edited. Saved recaps include their reviewed excerpts and stay on this machine.'));
+  paintCatchUp();
+}
+function renderCatchupHistory() {
+  const parent = $('#catchup-history'); if (!parent) return; parent.replaceChildren(element('h3', '', 'Saved recaps'));
+  if (!catchupHistory.length) parent.append(element('p', 'muted', 'Your daily and weekly recaps will appear here.'));
+  for (const item of catchupHistory) parent.append(button(`${item.label}\n${new Date(item.created).toLocaleDateString()} · ${item.provider}`, 'catchup-history-item', async () => { catchupRecord = await api.catchupGet({ id: item.id }); renderCatchupResult(); $('#catchup-result').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+}
+async function openCatchupSource(source) {
+  updateLibrary(await api.library());
+  const c = state.library.contexts.find(c => c.id === source.contextId) || state.library.contexts.find(c => c.sessionId === source.sessionId && c.provider === source.provider && c.project === source.project);
+  if (!c) return toast('This context is no longer available. Its reviewed excerpt remains in the saved recap.', true);
+  state.view = c.archived ? 'archived' : 'all'; state.query = ''; $('#search').value = ''; state.provider = 'all'; render(); await selectContext(c.id);
+}
+function renderCatchupResult() {
+  const parent = $('#catchup-result'); if (!parent || !catchupRecord) return;
+  const record = catchupRecord; parent.replaceChildren();
+  parent.append(element('div', 'eyebrow', 'YOUR WORK, RECONSTRUCTED'), element('h2', '', record.label), element('p', 'muted', `Generated ${new Date(record.created).toLocaleString()} · ${record.provider} · ${record.model}`), element('p', 'catchup-overview', record.overview), element('p', 'muted', 'AI recap based on the reviewed excerpts. Check the linked conversations before relying on a decision or completion claim.'));
+  for (const warning of record.warnings) parent.append(element('p', 'notice', warning));
+  for (const project of record.projects) {
+    const sources = project.sourceIds.map(id => record.sources.find(s => s.sourceId === id)).filter(Boolean), first = sources[0], card = element('article', 'catchup-project');
+    card.append(element('h3', '', first?.project?.split(/[\\/]/).filter(Boolean).pop() || first?.title || 'Project'), element('p', 'muted', `${first?.machine || ''} · ${first?.project || 'Project not recorded'}`), element('p', '', project.summary));
+    for (const [key, title] of [['decisions', 'Decisions & outcomes'], ['openLoops', 'Still open'], ['nextSteps', 'Suggested next steps']]) {
+      if (!project[key].length) continue;
+      const list = element('ul'); for (const item of project[key]) list.append(element('li', '', item)); card.append(element('h4', '', title), list);
+    }
+    const links = element('div', 'catchup-links'); for (const source of sources) links.append(button('↗ ' + source.title, 'quiet', () => openCatchupSource(source))); card.append(links); parent.append(card);
+  }
+  const evidence = element('details', 'catchup-saved-evidence'); evidence.append(element('summary', '', 'Reviewed evidence saved with this recap'));
+  for (const source of record.sources) { evidence.append(element('h4', '', `${source.sourceId} · ${source.title}`)); for (const message of source.messages) evidence.append(element('pre', '', `${message.role} · ${new Date(message.timestamp).toLocaleString()}\n${message.content}`)); } parent.append(evidence);
+  parent.append(button('Copy recap', 'button', () => api.copyText([record.label, record.overview, ...record.projects.flatMap(p => [record.sources.find(s => s.projectId === p.projectId)?.project || 'Project', p.summary, ...p.decisions, ...p.openLoops, ...p.nextSteps])].join('\n\n'))), button('Delete saved recap', 'quiet', async () => { catchupHistory = await api.catchupDelete({ id: record.id }); catchupRecord = null; parent.replaceChildren(); renderCatchupHistory(); }));
+}
+let catchupPolling = false;
+setInterval(async () => {
+  if (catchupPolling || catchupState.job?.status !== 'running') return;
+  catchupPolling = true;
+  try { acceptCatchUp(await api.catchupStatus()); } catch (error) { toast(error.message, true); } finally { catchupPolling = false; }
+}, 1000);

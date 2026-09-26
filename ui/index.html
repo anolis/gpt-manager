@@ -12,6 +12,7 @@
   <div class="nav-label">LIBRARY</div>
   <nav id="navigation">
     <button class="nav active" data-view="all"><span>▦</span> All contexts <b id="nav-total">0</b></button>
+    <button class="nav" data-view="catchup"><span>◷</span> Catch up</button>
     <button class="nav" data-view="starred"><span>☆</span> Starred</button>
     <button class="nav" data-view="imported"><span>⇥</span> Imported</button>
     <button class="nav" data-view="archived"><span>▣</span> Archived</button>
@@ -20,7 +21,7 @@
     <button class="nav" data-view="cloud"><span>☁</span> Cloud sync</button>
     <button class="nav" data-view="transfer"><span>⇄</span> Backup & teleport</button>
   </nav>
-  <div class="sidebar-bottom"><div class="local-indicator"><span class="status-dot"></span> On-device storage</div><p>Conversations stay local until you export or choose to sync them.</p><div class="version">GPT MANAGER <span>v0.3.0</span></div></div>
+  <div class="sidebar-bottom"><div class="local-indicator"><span class="status-dot"></span> On-device storage</div><p>Conversations stay local until you export or choose to sync them.</p><div class="version">GPT MANAGER <span>v0.4.0</span></div></div>
 </aside>
 <main>
   <header><div class="breadcrumb">Workspace <span>/</span> <strong id="crumb">All contexts</strong></div><div><button class="quiet" id="terminal-reopen">▤ &nbsp; Terminals</button><button class="quiet" id="refresh">↻ &nbsp; Refresh</button></div></header>
@@ -33,6 +34,7 @@
   </section>
   <section id="locations-view" class="hidden"></section>
   <section id="cloud-view" class="hidden"></section>
+  <section id="catchup-view" class="hidden"></section>
   <section id="transfer-view" class="hidden"></section>
   <footer><span id="status">Reading provider stores…</span><span>LOCAL FIRST <span class="status-dot"></span></span></footer>
 </main>

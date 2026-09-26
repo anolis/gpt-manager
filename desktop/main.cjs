@@ -69,6 +69,7 @@ app.whenReady().then(async () => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   for (const name of ['scan', 'library', 'detail', 'annotate', 'files']) register(name, params => rpc(name, params));
+  for (const name of ['status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete']) register('catchup' + name[0].toUpperCase() + name.slice(1), params => rpc('catchup_' + name, params));
   for (const [name, method] of Object.entries({ sshAdd: 'ssh_add', sshRemove: 'ssh_remove', sshRefresh: 'ssh_refresh', sshAliases: 'ssh_aliases', localNetworks: 'local_networks', scanNetwork: 'scan_network' })) register(name, params => rpc(method, params));
   register('handoffRelease', async id => {
     const answer = await dialog.showMessageBox(win, { type: 'warning', message: 'Allow this source context to resume again?', detail: 'First stop the conversation on its destination machine. Releasing the handoff can create divergent histories if both copies are used. No histories will be merged.', buttons: ['Keep handed off', 'Release handoff'], defaultId: 0, cancelId: 0 });
@@ -202,6 +203,15 @@ app.whenReady().then(async () => {
         await addSshDialog();
         if (!document.querySelector('#ssh-host')) throw new Error('SSH endpoint form missing');
         document.querySelector('#ssh-host').closest('dialog').close();
+        document.querySelector('[data-view="catchup"]').click();
+        for (let i = 0; i < 40 && !catchupLoaded; i++) await delay(50);
+        document.querySelector('#catchup-period').value = 'seven';
+        document.querySelector('#catchup-review').click();
+        for (let i = 0; i < 120 && !document.querySelector('#catchup-generate'); i++) await delay(100);
+        if (!document.querySelector('#catchup-generate') || catchupState.preview.sources.length !== 4) throw new Error('Catch-up activity preview failed');
+        document.querySelector('#catchup-generate').click();
+        for (let i = 0; i < 120 && !catchupRecord; i++) await delay(100);
+        if (!document.querySelector('.catchup-project') || !catchupRecord) throw new Error('Catch-up recap generation failed');
         document.querySelector('[data-view="cloud"]').click();
         if (document.querySelectorAll('.cloud-card').length !== 3) throw new Error('Cloud provider cards missing');
         document.querySelector('.maintainer-setup summary').click();
@@ -238,6 +248,7 @@ app.whenReady().then(async () => {
       })()`);
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'cloud') await win.webContents.executeJavaScript("state.view = 'cloud'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'locations') await win.webContents.executeJavaScript("state.view = 'locations'; render();");
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'catchup') await win.webContents.executeJavaScript("state.view = 'catchup'; render(); document.querySelector('#catchup-result').scrollIntoView();");
       await new Promise(r => setTimeout(r, 300));
       console.log('INTERACTION_RESULT ' + JSON.stringify(interaction));
       const output = process.env.GPT_MANAGER_SCREENSHOT;

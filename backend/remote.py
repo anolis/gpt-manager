@@ -16,10 +16,12 @@ try:
     from .manager import atomic_json
     from .ssh_agent import machine_identity
     from .session_lock import handoff_status, update_handoff
+    from .activity import activity_excerpt
 except ImportError:
     from manager import atomic_json
     from ssh_agent import machine_identity
     from session_lock import handoff_status, update_handoff
+    from activity import activity_excerpt
 
 
 def ssh_aliases():
@@ -60,7 +62,7 @@ def ssh_arguments(host, operation, terminal=False):
     if not isinstance(host, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@-]{0,199}', host):
         raise ValueError('Use an SSH config alias or user@hostname. Configure ports and keys in ~/.ssh/config.')
     folder = Path(__file__).parent
-    sources = [(folder / name).read_text() for name in ('manager.py', 'session_lock.py', 'workspace_transfer.py', 'ssh_agent.py')]
+    sources = [(folder / name).read_text() for name in ('manager.py', 'session_lock.py', 'workspace_transfer.py', 'activity.py', 'ssh_agent.py')]
     # Each source is compiled separately so __future__ imports remain valid.
     bootstrap = "import base64,json,sys\ng={'__name__':'gpt_manager_ssh'}\n"
     for source in sources:
@@ -220,6 +222,8 @@ class RemoteLocations:
     def read(self, operation, id, **params):
         c = self.context(id)
         if c['origin'] != 'remote':
+            if operation == 'activity':
+                return activity_excerpt(c, **params)
             return getattr(self.manager, operation)(id=id, **params)
         return self.request(self.endpoint(c['endpointId']), {'operation': operation, 'id': c['remoteId'], **params})
 

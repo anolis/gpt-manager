@@ -1,12 +1,12 @@
 {
   "name": "gpt-manager",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A local desktop library for AI contexts",
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_commands.cjs",
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_*.cjs",
     "check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check desktop/terminals.cjs && node --check ui/app.js && python3 -m compileall -q backend"
   },
   "devDependencies": {

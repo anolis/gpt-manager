@@ -34,7 +34,7 @@ def ssh_dispatch(request):
     if sys.version_info < (3, 10):
         raise ValueError('The SSH host needs Python 3.10 or newer.')
     operation = request.get('operation')
-    if operation not in ('scan', 'detail', 'files', 'resume', 'reserve', 'export', 'workspace', 'finish', 'release'):
+    if operation not in ('scan', 'detail', 'files', 'activity', 'resume', 'reserve', 'export', 'workspace', 'finish', 'release'):
         raise ValueError('Unsupported SSH operation')
     with tempfile.TemporaryDirectory(prefix='gpt-manager-inspect-') as temporary:
         manager = Manager(Path.home(), temporary)
@@ -89,6 +89,8 @@ def ssh_dispatch(request):
             return None
         if operation == 'detail':
             return manager.detail(context_id, request.get('cursor', 0))
+        if operation == 'activity':
+            return activity_excerpt(context, request.get('start'), request.get('end'))
         if operation == 'files':
             return manager.files(context_id)
         if request.get('machineId') != machine['id']:
