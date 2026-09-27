@@ -1,4 +1,6 @@
 """Explicit SSH handoff, including verified returns to a retained source copy."""
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -51,6 +53,11 @@ def git_check(folder, pull=False):
     return {'repository': True, 'upstream': branch, 'dirty': dirty, 'ahead': ahead, 'behind': behind, 'pulled': pull}
 
 
+def confirmation_fingerprint(snapshot):
+    """Keep nanosecond timestamps/inodes out of JavaScript's lossy numbers."""
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 class Teleport:
     def __init__(self, remote):
         self.remote = remote
@@ -94,13 +101,14 @@ class Teleport:
             retained = copies[0]
             local_snapshot = source_fingerprint(self.manager, retained)
             local_changed = previous.get('source') != local_snapshot
-            if discard_local_changes and expected_local != local_snapshot:
+            confirmation = confirmation_fingerprint(local_snapshot)
+            if discard_local_changes and expected_local != confirmation:
                 raise ValueError('The local conversation changed again after confirmation. Stop local provider sessions and retry Resume here.')
             if local_changed and not discard_local_changes:
                 # No reservations or writes have occurred. Electron presents the
-                # choice, then sends this exact snapshot back with confirmation.
+                # choice, then sends this opaque fingerprint back with confirmation.
                 return {'conflict': 'retained-changed', 'localPath': retained['path'],
-                        'sourceMachine': c['machine'], 'expectedLocal': local_snapshot}
+                        'sourceMachine': c['machine'], 'expectedLocal': confirmation}
         elif copies:
             raise ValueError('A local native copy of this session already exists. Resume that copy or resolve it before teleporting; automatic merging is not supported.')
         if c['provider'] == 'antigravity' and not c['root'].endswith('antigravity-cli'):

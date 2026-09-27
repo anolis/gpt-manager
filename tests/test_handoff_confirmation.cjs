@@ -8,7 +8,7 @@ const handlerSource = source.slice(source.indexOf("  register('resumeHere'"), so
 async function resume(choice, conflict = true) {
   const calls = [], dialogs = [];
   let handler;
-  const snapshot = { project: '/project', files: [['/session.jsonl', 1, 100, 10]] };
+  const snapshot = 'a'.repeat(64);
   vm.runInNewContext(handlerSource, {
     register: (_name, fn) => { handler = fn; }, win: {},
     terminalController: { isRunning: () => false },
@@ -37,7 +37,7 @@ test('canceling a changed local conversation never submits discard permission', 
   assert.equal(dialogs[1].buttons[1], 'Trash local changes and continue');
 });
 
-test('explicit confirmation submits the reviewed snapshot with discard permission', async () => {
+test('explicit confirmation submits the opaque fingerprint with discard permission', async () => {
   const { result, calls, snapshot } = await resume(1);
   assert.equal(result.id, 'restored');
   assert.equal(calls.length, 2);

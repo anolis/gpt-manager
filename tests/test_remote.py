@@ -201,6 +201,34 @@ class RemoteTests(unittest.TestCase):
             teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
         self.assertEqual(self.source.read_bytes(), changed)
 
+    def test_discard_confirmation_survives_javascript_json_round_trip(self):
+        folder = self.prepare_return()
+        self.source.write_bytes(self.original + b'{"changed":true}\n')
+        # This real timestamp cannot be represented exactly by a JS Number.
+        timestamp = 1790520971206454256
+        os.utime(self.source, ns=(timestamp, timestamp))
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        bridge = subprocess.run(['node', '-e',
+            "const fs = require('node:fs'); const review = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(JSON.stringify({expected_local: review.expectedLocal}));"],
+            input=json.dumps(review), text=True, capture_output=True, check=True, timeout=10)
+        confirmation = json.loads(bridge.stdout)['expected_local']
+        self.assertIsInstance(confirmation, str)
+        result = teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=confirmation)
+        self.assertEqual(self.source.read_bytes(), self.latest)
+        self.assertIsNone(result['warning'])
+
+    def test_discard_still_detects_one_nanosecond_change(self):
+        folder = self.prepare_return()
+        self.source.write_bytes(self.original + b'{"changed":true}\n')
+        timestamp = 1790520971206454256
+        os.utime(self.source, ns=(timestamp, timestamp))
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        os.utime(self.source, ns=(timestamp, timestamp + 1))
+        with self.assertRaisesRegex(ValueError, 'changed again after confirmation'):
+            teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
+
     def test_failed_discard_restores_changed_copy_and_requires_confirmation_again(self):
         folder = self.prepare_return()
         changed = self.original + b'{"changed":true}\n'
