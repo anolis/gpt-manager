@@ -125,6 +125,8 @@ It summarizes **yesterday**, saves the result in **Saved recaps**, and runs whil
 
 Open **Context locations → Add SSH endpoint**. Choose a named alias from `~/.ssh/config` (including `Include` files), or enter `user@hostname`. Wildcard/negated Host patterns are not offered as aliases. OpenSSH remains responsible for ports, jump hosts, identities and other configuration.
 
+In the context library, use **Host** alongside the provider filters to show all hosts, this machine (including imported copies), all SSH hosts, or one endpoint. Offline endpoints remain selectable for browsing cached contexts. Host filtering also works with search, Starred, and Archived views.
+
 - **Scan local network** discovers SSH banners on port 22 in a selected, directly attached private IPv4 subnet. Scans are explicit, limited to the local /24 (or smaller), and use at most 32 concurrent connections. They do not authenticate or accept host keys. IPv6, nonstandard ports and routed subnets require a manually added endpoint or alias.
 - First connect using your system SSH client to verify the host key and set up key/agent authentication. GPT Manager requires existing host trust and noninteractive authentication; it never disables host-key checking or copies private keys. Hosts need Python 3.10+, a POSIX environment, and their authenticated provider CLIs on the SSH command PATH.
 - Remote discovery reads native stores and the remote manager’s default settings/annotations through a temporary Python helper. It does not require installing GPT Manager on the remote host. Remote imports are not listed. Library rows, inspectors and terminal tabs identify the execution machine. Refresh scans configured endpoints; failed refreshes retain the in-memory snapshot with an offline label.

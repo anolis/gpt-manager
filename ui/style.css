@@ -48,3 +48,7 @@
 #setup-view .transfer-card small { display: block; margin-bottom: 12px; }
 #setup-view .transfer-card p { min-height: 0; overflow-wrap: anywhere; }
 #setup-view .transfer-card h2 { margin-top: 0; }
+.filter-line { flex-wrap: wrap; }
+.host-filter { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 11px; max-width: 100%; }
+.host-filter select { padding: 8px 10px; min-width: 0; max-width: 280px; }
+#result-count { white-space: nowrap; }

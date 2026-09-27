@@ -2,7 +2,7 @@
 const api = window.manager;
 const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
-const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
+const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', host: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
 const titles = { usage: 'Provider usage', setup: 'AI setup', catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
 const descriptions = { usage: 'Your remaining allowance and the next reset, reported by each provider.', setup: 'Install your AI assistant, sign in, and get back to your projects.', catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
@@ -27,6 +27,9 @@ function filtered() {
   const query = state.query.toLowerCase();
   return state.library.contexts.filter(c => {
     if (state.provider !== 'all' && c.provider !== state.provider) return false;
+    if (state.host === 'local' && c.origin === 'remote') return false;
+    if (state.host === 'ssh' && c.origin !== 'remote') return false;
+    if (!['all', 'local', 'ssh'].includes(state.host) && (c.origin !== 'remote' || c.endpointId !== state.host)) return false;
     if (state.view === 'archived' ? !c.archived : c.archived) return false;
     if (state.view === 'starred' && !c.starred) return false;
     if (state.view === 'imported' && c.origin !== 'imported') return false;
@@ -34,6 +37,14 @@ function filtered() {
   }).sort((a, b) => ({ recent: () => b.updated.localeCompare(a.updated), oldest: () => a.updated.localeCompare(b.updated), size: () => b.size - a.size, title: () => a.title.localeCompare(b.title) })[$('#sort').value]());
 }
 function providerLabel(provider) { const span = element('span', 'provider-label'); span.append(element('i', `provider-dot ${provider}`), document.createTextNode(providers[provider])); return span; }
+function renderHostFilter() {
+  const select = $('#host-filter'), endpoints = state.library.sshEndpoints || [];
+  if (!['all', 'local', 'ssh'].includes(state.host) && !endpoints.some(e => e.id === state.host)) state.host = 'all';
+  select.replaceChildren();
+  const options = [['all', 'All hosts'], ['local', 'This machine'], ['ssh', 'All SSH hosts'], ...endpoints.map(e => [e.id, `${e.label && e.label !== e.host ? e.label + ' · ' : ''}${e.host}${e.connected ? '' : ' (offline)'}`])];
+  for (const [value, label] of options) { const option = element('option', '', label); option.value = value; select.append(option); }
+  select.value = state.host;
+}
 function render() {
   $('#crumb').textContent = titles[state.view]; $('#page-title').textContent = titles[state.view]; $('#page-description').textContent = descriptions[state.view];
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
@@ -55,7 +66,7 @@ function render() {
   }
   const pills = $('#provider-filters'); pills.replaceChildren();
   for (const [id, name] of [['all', 'All providers'], ...Object.entries(providers)]) pills.append(button(name, `pill ${state.provider === id ? 'active' : ''}`, () => { state.provider = id; render(); }));
-  renderRows(); renderLocations(); renderTransfer(); renderCloud(); updateSelection();
+  renderHostFilter(); renderRows(); renderLocations(); renderTransfer(); renderCloud(); updateSelection();
 }
 function updateSelection() {
   $('#selected-count').textContent = state.selected.size; $('#export-button').disabled = state.selected.size === 0;
@@ -64,7 +75,7 @@ function updateSelection() {
 }
 function renderRows() {
   const rows = $('#context-rows'); rows.replaceChildren(); const list = filtered(); $('#result-count').textContent = `${list.length} context${list.length === 1 ? '' : 's'}`;
-  if (!list.length) { const empty = element('div', 'empty'); empty.append(element('h2', '', 'No contexts here yet.'), element('p', '', state.query ? 'Try another search or provider filter.' : 'Connect a context location or import a portable archive.')); rows.append(empty); return; }
+  if (!list.length) { const empty = element('div', 'empty'); empty.append(element('h2', '', 'No contexts here yet.'), element('p', '', state.query || state.provider !== 'all' || state.host !== 'all' ? 'Try another search, provider, or host filter.' : 'Connect a context location or import a portable archive.')); rows.append(empty); return; }
   for (const c of list) {
     const row = element('div', `context-row ${state.active === c.id ? 'selected' : ''}`); row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-label', `Inspect ${c.title}`);
     row.onclick = () => run(() => selectContext(c.id)); row.onkeydown = e => { if (e.target === row && ['Enter', ' '].includes(e.key)) { e.preventDefault(); run(() => selectContext(c.id)); } };
@@ -153,6 +164,7 @@ async function importPreview() { await operation('Validating archive and checksu
 $('#navigation').addEventListener('click', e => { const button = e.target.closest('[data-view]'); if (button) { state.view = button.dataset.view; render(); } });
 $('#search').oninput = e => { state.query = e.target.value; renderRows(); updateSelection(); };
 $('#sort').onchange = () => renderRows();
+$('#host-filter').onchange = e => { state.host = e.target.value; renderRows(); updateSelection(); };
 $('#select-all').onchange = e => { for (const c of filtered()) e.target.checked ? state.selected.add(c.id) : state.selected.delete(c.id); renderRows(); updateSelection(); };
 $('#refresh').onclick = () => run(() => operation('Refreshing local stores…', async () => updateLibrary(await api.scan())));
 $('#export-button').onclick = () => run(() => exportContexts([...state.selected]));
