@@ -334,8 +334,7 @@ function renderSshLocations(page) {
 }
 async function addSshDialog(initialHost = '') {
   const aliases = await api.sshAliases(), dialog = transientDialog('Add SSH endpoint'), form = element('form');
-  const hostField = element('div', 'field'), hostLabel = element('label', '', 'SSH alias or user@hostname'), host = element('input'); host.id = 'ssh-host'; hostLabel.htmlFor = host.id; host.required = true; host.value = initialHost; host.placeholder = 'workstation or user@192.168.1.20'; host.setAttribute('list', 'ssh-aliases');
-  const list = element('datalist'); list.id = 'ssh-aliases'; for (const alias of aliases) { const option = element('option'); option.value = alias; list.append(option); } hostField.append(hostLabel, host, list);
+  const hostField = element('div', 'field'), hostLabel = element('label', '', 'SSH alias or user@hostname'), host = element('input'); host.id = 'ssh-host'; hostLabel.htmlFor = host.id; host.required = true; host.value = initialHost; host.placeholder = 'workstation or user@192.168.1.20'; hostField.append(hostLabel, host);
   if (aliases.length) { const picker = element('select'); picker.setAttribute('aria-label', 'Saved SSH aliases'); const empty = element('option', '', 'Choose an alias from SSH config…'); empty.value = ''; picker.append(empty); for (const alias of aliases) { const option = element('option', '', alias); option.value = alias; picker.append(option); } picker.onchange = () => { if (picker.value) host.value = picker.value; }; hostField.append(picker); }
   const labelField = element('div', 'field'), labelTitle = element('label', '', 'Display name (optional)'), label = element('input'); label.id = 'ssh-label'; labelTitle.htmlFor = label.id; label.maxLength = 100; labelField.append(labelTitle, label);
   const submit = element('button', 'button primary', 'Add and connect'); submit.type = 'submit'; const status = element('p', 'muted'); status.setAttribute('role', 'status');
