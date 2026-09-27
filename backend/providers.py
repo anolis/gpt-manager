@@ -15,6 +15,7 @@ import uuid
 import zipfile
 from pathlib import Path
 from urllib.request import urlopen
+from urllib.parse import urlparse
 
 try:
     from .manager import atomic_json, read_json
@@ -22,6 +23,8 @@ except ImportError:
     from manager import atomic_json, read_json
 
 PACKAGES = {'codex': '@openai/codex', 'claude': '@anthropic-ai/claude-code', 'gemini': '@google/gemini-cli'}
+SETUP_PROVIDERS = (*PACKAGES, 'antigravity')
+AGY_RELEASES = 'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/'
 NODE_VERSION = 'v24.18.0'
 # Official release checksums, pinned with the runtime version.
 NODE_HASHES = {'darwin-arm64': 'e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1', 'darwin-x64': 'dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080', 'linux-arm64': '6b4484c2190274175df9aa8f28e2d758a819cb1c1fe6ab481e2f95b463ab8508', 'linux-x64': '783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8', 'win-arm64': 'f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01', 'win-x64': '0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821'}
@@ -63,7 +66,7 @@ class ProviderSetup:
 
     def runtime(self):
         system = {'Windows': 'win', 'Linux': 'linux', 'Darwin': 'darwin'}.get(platform.system())
-        arch = {'AMD64': 'x64', 'x86_64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine())
+        arch = {'amd64': 'x64', 'x86_64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine().lower())
         key = f'{system}-{arch}'
         if key not in NODE_HASHES:
             raise ValueError('Automatic installation supports Windows, macOS and glibc Linux on x64/ARM64.')
@@ -82,6 +85,11 @@ class ProviderSetup:
         return env
 
     def package_command(self, folder, provider):
+        if provider == 'antigravity':
+            binary = (folder / ('agy.exe' if os.name == 'nt' else 'agy')).resolve()
+            if not binary.is_relative_to(folder.resolve()) or not binary.is_file():
+                raise ValueError('Antigravity executable is missing or outside its installation.')
+            return [str(binary)]
         package = folder / 'node_modules' / PACKAGES[provider]
         metadata = read_json(package / 'package.json', {})
         entry = metadata.get('bin', {})
@@ -111,12 +119,15 @@ class ProviderSetup:
         if binary and provider in PACKAGES:
             try: return self.package_command(Path(binary).parent, provider)
             except (ValueError, OSError): pass
+        if provider == 'antigravity' and os.name == 'nt':
+            native = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData/Local'))) / 'agy/bin/agy.exe'
+            if native.is_file(): return [str(native)]
         native = Path.home() / '.local/bin' / (name + ('.exe' if os.name == 'nt' else ''))
         if native.is_file(): return [str(native)]
         return None
 
     def command(self, provider):
-        if provider not in (*PACKAGES, 'antigravity'): raise ValueError('Unknown provider')
+        if provider not in SETUP_PROVIDERS: raise ValueError('Unknown provider')
         preference = read_json(self.root / 'preferences.json', {}).get(provider, 'existing')
         managed = self.managed_command(provider)
         command = managed if preference == 'managed' else self.existing_command(provider) or managed
@@ -124,7 +135,7 @@ class ProviderSetup:
         raise ValueError('Open AI setup to install this provider, then sign in.')
 
     def prefer(self, provider, source):
-        if provider not in PACKAGES or source not in ('existing', 'managed'): raise ValueError('Choose an installed provider source.')
+        if provider not in SETUP_PROVIDERS or source not in ('existing', 'managed'): raise ValueError('Choose an installed provider source.')
         if source == 'managed' and not self.managed_command(provider): raise ValueError('Install a managed copy first.')
         if source == 'existing' and not self.existing_command(provider): raise ValueError('No existing CLI was found. Install one and refresh, or use a managed copy.')
         with self.lock:
@@ -135,7 +146,7 @@ class ProviderSetup:
 
     def status(self):
         providers = []
-        for provider in PACKAGES:
+        for provider in SETUP_PROVIDERS:
             try: command = self.command(provider)
             except ValueError: command = None
             record = read_json(self.root / f'{provider}.json', {})
@@ -144,7 +155,7 @@ class ProviderSetup:
         with self.lock: return {'providers': providers, 'job': copy.deepcopy(self.job), 'authChecking': self.auth_busy}
 
     def uninstall(self, provider):
-        if provider not in PACKAGES: raise ValueError('Unknown provider')
+        if provider not in SETUP_PROVIDERS: raise ValueError('Unknown provider')
         with self.lock:
             if self.job and self.job['status'] == 'running': raise ValueError('Wait for installation to finish or cancel it first.')
             if self.auth_busy: raise ValueError('Wait for the sign-in check to finish before uninstalling.')
@@ -168,7 +179,7 @@ class ProviderSetup:
             self.auth_busy = True; self.auth_last_check = time.monotonic()
         def check():
             try:
-                for provider in PACKAGES:
+                for provider in SETUP_PROVIDERS:
                     if self.closing: break
                     try: command = self.command(provider)
                     except ValueError: continue
@@ -183,6 +194,11 @@ class ProviderSetup:
         return self.status()
 
     def _auth_check(self, provider, command):
+        if provider == 'antigravity':
+            settings = read_json(Path.home() / '.gemini/antigravity-cli/settings.json', {})
+            if settings.get('modelProvider') == 'gemini' and os.environ.get('GEMINI_API_KEY'):
+                return {'state': 'configured', 'label': 'API key configured (not verified)'}
+            return {'state': 'unknown', 'label': 'Open Antigravity to check sign-in; account status is not available here.'}
         if provider == 'gemini':
             if os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY'):
                 return {'state':'configured','label':'API key configured (not verified)'}
@@ -229,7 +245,7 @@ class ProviderSetup:
 
     def install(self, provider, activate=True):
         if not isinstance(activate, bool): raise ValueError('Invalid installation preference')
-        if provider not in PACKAGES: raise ValueError('Choose Codex, Claude or Gemini CLI.')
+        if provider not in SETUP_PROVIDERS: raise ValueError('Choose Codex, Claude, Gemini CLI or Antigravity.')
         with self.lock:
             if self.job and self.job['status'] == 'running': raise ValueError('Wait for the current installation or cancel it.')
             self.cancel_event.clear()
@@ -270,6 +286,54 @@ class ProviderSetup:
             if destination.exists(): shutil.rmtree(destination)
             (Path(temporary) / destination.name).rename(destination)
 
+    def _download_antigravity(self, stage):
+        system = {'Windows': 'windows', 'Linux': 'linux', 'Darwin': 'darwin'}.get(platform.system())
+        arch = {'amd64': 'amd64', 'x86_64': 'amd64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine().lower())
+        if not system or not arch: raise ValueError('Antigravity supports Windows, macOS and Linux on x64/ARM64.')
+        key = f'{system}_{arch}'
+        if system == 'linux' and (platform.libc_ver()[0] == 'musl' or any(Path('/lib').glob('libc.musl-*.so.1'))): key += '_musl'
+        self._progress('Checking the official Antigravity release…')
+        with urlopen(AGY_RELEASES + key + '.json', timeout=30) as response:
+            raw = response.read(65537)
+        if len(raw) > 65536: raise ValueError('Antigravity release manifest is too large.')
+        manifest = json.loads(raw)
+        url, checksum, version = manifest.get('url', ''), manifest.get('sha512', ''), manifest.get('version', '')
+        parsed = urlparse(url)
+        if parsed.scheme != 'https' or parsed.netloc != 'storage.googleapis.com' or not parsed.path.startswith('/antigravity-public/antigravity-cli/'):
+            raise ValueError('Antigravity release URL is not an official download.')
+        if not isinstance(checksum, str) or not re.fullmatch(r'[a-fA-F0-9]{128}', checksum) or not isinstance(version, str) or not version or len(version) > 100:
+            raise ValueError('Antigravity release metadata is invalid.')
+        payload = stage / 'download'; digest = hashlib.sha512(); received = 0
+        limit = 512 * 1024**2
+        self._check(); self._progress('Downloading Antigravity…', 0)
+        with urlopen(url, timeout=30) as response, payload.open('wb') as out:
+            total = int(response.headers.get('Content-Length', 0))
+            while True:
+                self._check(); chunk = response.read(256 * 1024)
+                if not chunk: break
+                received += len(chunk)
+                if received > limit: raise ValueError('Antigravity download exceeded its size limit.')
+                out.write(chunk); digest.update(chunk)
+                self._progress(f'Downloading Antigravity: {received // 1024**2} MB' + (f' of {total // 1024**2} MB' if total else ''), min(100, round(received / total * 100)) if total else None)
+        if digest.hexdigest() != checksum.lower(): raise ValueError('Antigravity checksum did not match. Retry the download.')
+        self._check(); self._progress('Verified download. Preparing Antigravity…')
+        binary = stage / ('agy.exe' if system == 'windows' else 'agy')
+        if parsed.path.endswith('.tar.gz'):
+            with tarfile.open(payload, 'r:gz') as bundle:
+                member = bundle.getmember('antigravity')
+                if not member.isfile() or not 0 < member.size <= limit: raise ValueError('Invalid Antigravity executable in archive.')
+                # Copy only the regular executable; never extract arbitrary archive paths or links.
+                with bundle.extractfile(member) as src, binary.open('wb') as out:
+                    while True:
+                        self._check(); chunk = src.read(256 * 1024)
+                        if not chunk: break
+                        out.write(chunk)
+            payload.unlink()
+        else:
+            payload.rename(binary)
+        binary.chmod(0o755)
+        return version
+
     def _run(self, args, cwd, timeout=600):
         with tempfile.TemporaryFile() as log:
             env = self.environment()
@@ -297,19 +361,23 @@ class ProviderSetup:
     def _install(self, provider, activate=True):
         stage = None
         try:
-            self._download_runtime(); self._check()
+            if provider != 'antigravity': self._download_runtime()
+            self._check()
             stage = self.root / (provider + '-' + uuid.uuid4().hex); stage.mkdir()
-            self._progress(f'Installing {provider.capitalize()} and its dependencies… This can take several minutes.')
-            (stage / 'package.json').write_text('{"private":true}')
-            _, _, node, npm = self.runtime()
-            self._run([str(node), str(npm), 'install', '--prefix', str(stage), '--registry=https://registry.npmjs.org', '--no-audit', '--no-fund', '--save-exact', '--include=optional', PACKAGES[provider] + '@latest'], stage)
+            if provider == 'antigravity':
+                version = self._download_antigravity(stage)
+            else:
+                self._progress(f'Installing {provider.capitalize()} and its dependencies… This can take several minutes.')
+                (stage / 'package.json').write_text('{"private":true}')
+                _, _, node, npm = self.runtime()
+                self._run([str(node), str(npm), 'install', '--prefix', str(stage), '--registry=https://registry.npmjs.org', '--no-audit', '--no-fund', '--save-exact', '--include=optional', PACKAGES[provider] + '@latest'], stage)
+                version = read_json(stage / 'node_modules' / PACKAGES[provider] / 'package.json', {}).get('version', '')
             self._progress('Checking the installed CLI…')
             command = self.package_command(stage, provider)
             self._run([*command, '--version'], stage, timeout=45)
-            metadata = read_json(stage / 'node_modules' / PACKAGES[provider] / 'package.json', {})
             with self.lock:
                 self._check()
-                atomic_json(self.root / f'{provider}.json', {'folder': stage.name, 'version': metadata.get('version', '')})
+                atomic_json(self.root / f'{provider}.json', {'folder': stage.name, 'version': version})
                 preferences = read_json(self.root / 'preferences.json', {})
                 if activate:
                     preferences[provider] = 'managed'

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -131,3 +132,57 @@ class ProviderTests(unittest.TestCase):
         with patch.dict(os.environ, {'GEMINI_CLI_HOME':str(home),'GEMINI_API_KEY':'','GOOGLE_API_KEY':''}):
             result = self.setup._auth_check('gemini',['unused'])
         self.assertEqual(result['state'],'configured'); self.assertIn('not verified',result['label']); self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def agy_release(self, *, corrupt=False, unsafe=False, link=False, flat=False):
+        data = b'native agy fixture'
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w:gz') as bundle:
+            member = tarfile.TarInfo('antigravity'); member.size = len(data)
+            if link: member.type = tarfile.SYMTYPE; member.linkname = '../../outside'
+            bundle.addfile(member, io.BytesIO(data))
+        payload = data if flat else archive.getvalue()
+        manifest = {'version': '1.2.12', 'url': 'https://storage.googleapis.com/antigravity-public/antigravity-cli/fixture/agy' + ('.exe' if flat else '.tar.gz'), 'sha512': hashlib.sha512(payload).hexdigest()}
+        if corrupt: manifest['sha512'] = '0' * 128
+        if unsafe: manifest['url'] = 'https://example.com/agy'
+        class Response(io.BytesIO):
+            def __init__(self, value):
+                super().__init__(value); self.headers = {'Content-Length': str(len(value))}
+        return [Response(json.dumps(manifest).encode()), Response(payload)]
+
+    def test_antigravity_managed_install_verify_prefer_and_uninstall(self):
+        with patch('backend.providers.urlopen', side_effect=self.agy_release()), patch.object(self.setup, '_download_runtime') as node, patch.object(self.setup, '_run', return_value='1.2.12') as run:
+            self.setup.install('antigravity'); self.assertEqual(self.wait()['status'], 'complete')
+            node.assert_not_called(); self.assertEqual(run.call_args.args[0][-1], '--version')
+        entry = next(p for p in self.setup.status()['providers'] if p['id'] == 'antigravity')
+        self.assertTrue(entry['managed']); self.assertTrue(entry['managedInstalled']); self.assertEqual(entry['managedVersion'], '1.2.12')
+        self.assertEqual(Path(self.setup.command('antigravity')[0]).read_bytes(), b'native agy fixture')
+        with patch.object(self.setup, 'existing_command', return_value=['external-agy']):
+            self.setup.prefer('antigravity', 'existing'); self.assertEqual(self.setup.command('antigravity'), ['external-agy'])
+            self.setup.uninstall('antigravity'); self.assertEqual(self.setup.command('antigravity'), ['external-agy'])
+        self.assertFalse(list(self.setup.root.glob('antigravity-*')))
+
+    def test_antigravity_failed_checks_preserve_prior_install_without_execution(self):
+        record = self.setup.root / 'antigravity.json'; original = '{"folder":"previous","version":"1"}'
+        for bad in ({'corrupt':True}, {'unsafe':True}, {'link':True}):
+            record.write_text(original)
+            with patch('backend.providers.urlopen', side_effect=self.agy_release(**bad)), patch.object(self.setup, '_run') as run:
+                self.setup.install('antigravity'); self.assertEqual(self.wait()['status'], 'error'); run.assert_not_called()
+            self.assertEqual(record.read_text(), original); self.assertFalse(list(self.setup.root.glob('antigravity-*')))
+
+    def test_antigravity_windows_manifest_and_flat_executable(self):
+        stage = self.setup.root / 'stage'; stage.mkdir(); self.setup.job = {}
+        with patch('backend.providers.platform.system', return_value='Windows'), patch('backend.providers.platform.machine', return_value='ARM64'), patch('backend.providers.urlopen', side_effect=self.agy_release(flat=True)) as fetch:
+            self.assertEqual(self.setup._download_antigravity(stage), '1.2.12')
+            self.assertTrue(fetch.call_args_list[0].args[0].endswith('/windows_arm64.json'))
+            self.assertEqual((stage/'agy.exe').read_bytes(), b'native agy fixture')
+
+    def test_antigravity_update_retains_existing_cli_preference(self):
+        (self.setup.root/'preferences.json').write_text('{"antigravity":"existing"}')
+        with patch('backend.providers.urlopen', side_effect=self.agy_release()), patch.object(self.setup, '_run', return_value='1.2.12'), patch.object(self.setup, 'existing_command', return_value=['external-agy']):
+            self.setup.install('antigravity', activate=False); self.assertEqual(self.wait()['status'], 'complete')
+            self.assertEqual(self.setup.command('antigravity'), ['external-agy'])
+
+    def test_antigravity_auth_does_not_launch_an_interactive_cli_or_claim_login(self):
+        with patch('backend.providers.read_json', return_value={}), patch('backend.providers.subprocess.Popen') as launch:
+            result = self.setup._auth_check('antigravity', ['agy'])
+            self.assertEqual(result['state'], 'unknown'); launch.assert_not_called()

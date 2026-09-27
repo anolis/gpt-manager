@@ -100,7 +100,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
   }
   register('terminalStart', id => start(id));
   register('providerSignIn', async provider => {
-    if (!['codex', 'claude', 'gemini'].includes(provider)) throw new Error('Unknown provider');
+    if (!['codex', 'claude', 'gemini', 'antigravity'].includes(provider)) throw new Error('Unknown provider');
     const resolved = await rpc('provider_command', { provider });
     const args = provider === 'codex' ? ['login'] : provider === 'claude' ? ['auth', 'login'] : [];
     const cwd = path.join(app.getPath('userData'), 'provider-sign-in'); fs.mkdirSync(cwd, { recursive: true });

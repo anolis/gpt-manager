@@ -529,13 +529,13 @@ function renderSetup() {
   const cards = element('div', 'transfer-grid');
   for (const provider of setupState?.providers || []) {
     const card = element('article', 'transfer-card');
-    card.append(element('h2', '', providers[provider.id]), element('p', 'muted', provider.available ? `Using ${provider.managed ? 'the managed copy' : 'your existing CLI'}.` : 'No usable CLI found. Install a managed copy to continue.'));
+    card.append(element('h2', '', provider.id === 'antigravity' ? 'Antigravity CLI (agy)' : providers[provider.id]), element('p', 'muted', provider.available ? `Using ${provider.managed ? 'the managed copy' : 'your existing CLI'}.` : 'No usable CLI found. Install a managed copy to continue.'));
     card.append(element('p', 'muted', `Existing CLI: ${provider.existingAvailable ? 'found' : 'not found'} · Managed copy: ${provider.managedInstalled ? (provider.managedAvailable ? 'installed' : 'needs repair') + (provider.managedVersion ? ' · ' + provider.managedVersion : '') : 'not installed'}`));
     const auth = provider.auth || { state: 'unknown', label: 'Not checked yet' };
     const authStatus = element('p', 'provider-auth ' + auth.state, provider.available ? auth.label : 'Install a CLI to check sign-in.'); authStatus.setAttribute('role', 'status'); card.append(authStatus);
     if (auth.checkedAt) card.append(element('small', 'muted', 'Checked ' + new Date(auth.checkedAt * 1000).toLocaleTimeString()));
     const install = button(provider.managedInstalled ? 'Uninstall managed copy' : 'Install managed copy', 'button ' + (provider.managedInstalled ? '' : 'primary'), async () => { setupState = provider.managedInstalled ? await api.setupUninstall({ provider: provider.id }) : await api.setupInstall({ provider: provider.id }); catchupLoaded = false; renderSetup(); if (provider.managedInstalled) await loadSetup('force'); }); install.disabled = running || (provider.managedInstalled && setupState.authChecking);
-    const signIn = button(auth.state === 'signed_in' || auth.state === 'configured' ? 'Sign in again' : 'Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available || running;
+    const signIn = button(provider.id === 'antigravity' ? 'Open / sign in' : auth.state === 'signed_in' || auth.state === 'configured' ? 'Sign in again' : 'Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available || running;
     card.append(install, signIn);
     if (provider.managedInstalled) { const update = button('Update managed copy', 'quiet', async () => { setupState = await api.setupInstall({ provider: provider.id, activate: false }); renderSetup(); }); update.disabled = running; card.append(update); }
     if (provider.existingAvailable && provider.managed) card.append(button('Use existing CLI', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'existing' }); catchupLoaded = false; await loadSetup('force'); }));
@@ -551,7 +551,7 @@ function renderSetup() {
     page.insertBefore(status, cards);
   }
   page.append(button('Refresh installation & sign-in status', 'button', () => loadSetup('force')), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
-  page.append(element('p', 'muted', 'An existing CLI on PATH is preferred by default. Installing a managed copy explicitly switches to it; you can switch back anytime. Running terminals keep their current client. Uninstall removes only managed packages, keeping credentials and conversations. Sign-in checks report the CLI’s local status, not whether a provider will accept your next request. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
+  page.append(element('p', 'muted', 'An existing CLI on PATH is preferred by default. Installing a managed copy explicitly switches to it; you can switch back anytime. Running terminals keep their current client. Uninstall removes only managed packages, keeping credentials and conversations. Sign-in checks report the CLI’s local status, not whether a provider will accept your next request. Antigravity CLI opens its interactive sign-in screen; exit the terminal when finished. The Antigravity IDE is installed separately. Windows users: use native Windows installs and folders; WSL stores are separate.'));
 }
 setInterval(() => { if (setupState?.job?.status === 'running' || setupState?.authChecking) loadSetup(); }, 1000);
 
@@ -614,7 +614,7 @@ function renderUsage() {
     page.append(element('p', 'transfer-note', 'These are provider-reported account limits, not context-window space or estimated token counts. Only local CLI accounts are shown. Shared account activity elsewhere may consume the same allowance. A reset passing does not prove the balance has refilled; wait for a fresh report.'));
     page.append(button('Refresh usage', 'button', () => loadUsage(true)), button('AI setup', 'button', () => { state.view = 'setup'; render(); }));
     const label = element('label', 'usage-meter-toggle'), meter = element('input'); meter.type = 'checkbox'; meter.checked = usageState.claudeMeter; meter.onchange = () => run(async () => { try { usageState = await api.usageConfigure({ claudeMeter: meter.checked }); renderUsage(); } catch (e) { meter.checked = !meter.checked; throw e; } });
-    label.append(meter, document.createTextNode('Enable Claude usage meter for new local manager terminals')); page.append(label, element('p', 'muted', 'This supplies a quota status line for Claude sessions launched here, replacing any custom status line for those sessions only. Your Claude settings file stays unchanged. Restart the terminal after changing this option. Requires a recent Claude CLI and an account that reports limits.'));
+    label.append(meter, document.createTextNode('Also capture Claude usage from new local manager terminals (optional fallback)')); page.append(label, element('p', 'muted', 'Refresh usage reads your local Claude subscription login automatically. This optional fallback supplies a quota status line for Claude sessions launched here, replacing any custom status line for those sessions only. Your Claude settings file stays unchanged. Restart the terminal after changing this option. Requires a recent Claude CLI and an account that reports limits.'));
     const cards = element('div', 'usage-grid'); cards.id = 'usage-cards'; page.append(cards);
   }
   const cards = $('#usage-cards'); cards.replaceChildren();
@@ -627,7 +627,7 @@ function renderUsage() {
       if (!expired) { const bar = element('progress'); bar.max = 100; bar.value = window.remaining; bar.setAttribute('aria-label', window.label + ' allowance remaining'); row.append(bar); }
       row.append(element('small', 'muted', resetText(window.resetsAt))); card.append(row);
     }
-    if (!provider.windows.length) card.append(element('p', 'muted', provider.id === 'codex' && usageState.running ? 'Reading account limits…' : 'Remaining allowance not available yet.'));
+    if (!provider.windows.length) card.append(element('p', 'muted', provider.checking ? 'Reading account limits…' : 'Remaining allowance not available yet.'));
     card.append(element('p', 'muted', provider.message));
     if (provider.source) card.append(element('small', 'muted', 'Last reporting store: ' + provider.source));
     cards.append(card);

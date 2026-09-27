@@ -9,7 +9,7 @@ from backend.providers import ProviderSetup
 with tempfile.TemporaryDirectory(prefix='gpt-installer-check-') as temporary:
     setup = ProviderSetup(temporary)
     try:
-        for provider in ('codex', 'claude', 'gemini'):
+        for provider in ('codex', 'claude', 'gemini', 'antigravity'):
             setup.install(provider)
             while setup.status()['job']['status'] == 'running':
                 time.sleep(2)

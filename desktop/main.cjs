@@ -195,7 +195,7 @@ app.whenReady().then(async () => {
       if (!process.env.GPT_MANAGER_HOME || !process.env.GPT_MANAGER_DATA) throw new Error('Platform smoke requires isolated fixture paths.');
       const library = await rpc('scan');
       const setup = await rpc('setup_status');
-      if (!Array.isArray(library.contexts) || setup.providers.length !== 3) throw new Error('Backend smoke failed');
+      if (!Array.isArray(library.contexts) || setup.providers.length !== 4) throw new Error('Backend smoke failed');
       await new Promise((resolve, reject) => {
         const pty = require('node-pty').spawn('powershell.exe', ['-NoProfile', '-Command', "Write-Output 'PTY_READY'; $value = [Console]::ReadLine(); Write-Output ('REPLY:' + $value)"], { cols: 100, rows: 24, cwd: process.env.GPT_MANAGER_HOME, env: process.env, useConpty: true });
         let output = '', sent = false;
@@ -236,7 +236,7 @@ app.whenReady().then(async () => {
         document.querySelector('#ssh-host').closest('dialog').close();
         document.querySelector('[data-view="setup"]').click();
         for (let i = 0; i < 40 && !setupState; i++) await delay(50);
-        if (document.querySelectorAll('#setup-view .transfer-card').length !== 3) throw new Error('Provider setup cards missing');
+        if (document.querySelectorAll('#setup-view .transfer-card').length !== 4) throw new Error('Provider setup cards missing');
         for (let i = 0; i < 100 && setupState.providers[0].auth?.state !== 'signed_in'; i++) { await delay(100); await loadSetup(); }
         if (setupState.providers[0].auth?.state !== 'signed_in') throw new Error('Provider sign-in status missing');
         const originalSetup = setupState;
