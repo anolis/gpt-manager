@@ -98,7 +98,7 @@ def ssh_dispatch(request):
                 sys.stdout.buffer.flush()
             return None
         if operation == 'detail':
-            return manager.detail(context_id, request.get('cursor', 0))
+            return manager.detail(context_id, request.get('cursor'), request.get('direction', 'forward'))
         if operation == 'activity':
             return activity_excerpt(context, request.get('start'), request.get('end'))
         if operation == 'files':

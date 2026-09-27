@@ -157,6 +157,48 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(len(detail['messages']), 2)
         self.assertEqual(detail['skipped'], 1)
 
+    def test_latest_pages_all_providers_keep_chronological_order(self):
+        for provider, path in [('codex', self.codex), ('claude', self.claude), ('gemini', self.gemini), ('antigravity', self.agy)]:
+            with self.subTest(provider=provider):
+                rows = []
+                for i in range(451):
+                    text = f'{i} 🌙 ' + 'x' * 400
+                    rows.append({'codex': {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'text': text}]}},
+                                 'claude': {'type': 'user', 'message': {'role': 'user', 'content': text}},
+                                 'gemini': {'type': 'user', 'content': text},
+                                 'antigravity': {'type': 'USER_INPUT', 'content': text}}[provider])
+                if provider == 'gemini': path.write_text(json.dumps({'sessionId': 'gemini-1', 'messages': rows}))
+                else: self.write_lines(path, rows)
+                self.m.scan()
+                page = self.m.detail(self.context(provider)['id'], direction='older')
+                self.assertEqual([int(m['content'].split()[0]) for m in page['messages']], list(range(251, 451)))
+                messages = page['messages']
+                while page['next'] is not None:
+                    page = self.m.detail(self.context(provider)['id'], page['next'], direction='older')
+                    messages = page['messages'] + messages
+                self.assertEqual([int(m['content'].split()[0]) for m in messages], list(range(451)))
+
+    def test_latest_jsonl_handles_missing_newline_malformed_and_oversized_records(self):
+        with self.codex.open('ab') as f:
+            f.write(b'x' * (17 * 1024**2) + b'\n{broken}\n')
+            f.write(json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'content': [{'text': 'Latest 🌙'}]}}).encode())
+        id = self.context()['id']
+        page = self.m.detail(id, direction='older')
+        self.assertEqual([m['content'] for m in page['messages']], ['Latest 🌙'])
+        self.assertEqual(page['skipped'], 2)
+        older = self.m.detail(id, page['next'], direction='older')
+        self.assertEqual(len(older['messages']), 2)
+        self.assertIsNone(older['next'])
+
+    def test_latest_cursor_is_stable_when_new_messages_are_appended(self):
+        rows = [{'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'text': str(i)}]}} for i in range(451)]
+        self.write_lines(self.codex, rows)
+        id = self.context()['id']
+        page = self.m.detail(id, direction='older')
+        with self.codex.open('ab') as f: f.write(json.dumps(rows[-1]).encode() + b'\n')
+        older = self.m.detail(id, page['next'], direction='older')
+        self.assertEqual([m['content'] for m in older['messages']], [str(i) for i in range(51, 251)])
+
     def test_symlinked_provider_file_excluded(self):
         secret = self.base / 'secret.jsonl'; secret.write_text('private')
         self.codex.parent.joinpath('symlink.jsonl').symlink_to(secret)

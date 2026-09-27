@@ -22,6 +22,9 @@ for provider, title, name in contexts:
             {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'text': title + '. Start with a simple overview of the observation plan.'}]}},
             {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'content': [{'text': 'We can organize the session into three parts:\n\n1. Check visibility and weather.\n2. Select a target and calibrate the telescope.\n3. Capture observations and save the results.\n\nThe project already has a scheduler, so I’ll begin by inspecting how it selects targets.'}]}},
         ]
+        # Exercise opening the real renderer beyond the first backend page.
+        data.extend({'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant' if i % 2 else 'user',
+                    'content': [{'text': f'History message {i}: review the observatory plan.'}]}} for i in range(450))
     elif provider == 'claude':
         path = root / '.claude/projects/observatory/demo-claude.jsonl'
         data = [{'sessionId': 'demo-claude', 'cwd': str(project), 'type': 'user', 'message': {'role': 'user', 'content': title}}, {'type': 'assistant', 'message': {'role': 'assistant', 'content': 'The control service is ready for review.'}}]

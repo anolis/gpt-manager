@@ -72,6 +72,15 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(result['messages'][0]['content'], 'Remote conversation')
         self.assertFalse((self.host / '.local').exists(), 'Read-only scan created lock storage')
 
+    def test_remote_detail_loads_latest_then_older_pages(self):
+        with self.source.open('a') as f:
+            for i in range(450):
+                f.write(json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'text': str(i)}]}}) + '\n')
+        latest = self.remote.read('detail', self.context['id'], direction='older')
+        self.assertEqual([m['content'] for m in latest['messages']], [str(i) for i in range(250, 450)])
+        older = self.remote.read('detail', self.context['id'], direction='older', cursor=latest['next'])
+        self.assertEqual([m['content'] for m in older['messages']], [str(i) for i in range(50, 250)])
+
     def test_remote_activity_uses_same_timestamp_filter(self):
         rows = [json.loads(line) for line in self.source.read_text().splitlines()]
         rows[-1]['timestamp'] = '2026-09-25T12:00:00Z'

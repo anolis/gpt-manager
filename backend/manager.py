@@ -121,6 +121,35 @@ def sample_records(path):
     return records
 
 
+def reverse_lines(stream, end):
+    """Yield (byte offset, line) backwards with bounded memory per record."""
+    if end:
+        stream.seek(end - 1)
+        if stream.read(1) == b'\n':
+            end -= 1
+    position, pending, oversized = end, b'', False
+    limit = 16 * 1024**2
+    while position:
+        length = min(position, 64 * 1024)
+        position -= length
+        stream.seek(position)
+        data = stream.read(length) + pending
+        while True:
+            boundary = data.rfind(b'\n')
+            if boundary < 0:
+                break
+            line = data[boundary + 1:]
+            yield position + boundary + 1, None if oversized or len(line) > limit else line
+            oversized = False
+            data = data[:boundary]
+        if len(data) > limit:
+            oversized = True
+            data = b''
+        pending = data
+    if pending or oversized:
+        yield 0, None if oversized else pending
+
+
 class Manager:
     def __init__(self, home, data):
         self.home, self.data = Path(home).resolve(), Path(data).resolve()
@@ -271,12 +300,14 @@ class Manager:
             raise ValueError('Context no longer available. Refresh the library.')
         return self.contexts[id]
 
-    def detail(self, id, cursor=0):
+    def detail(self, id, cursor=None, direction='forward'):
         ctx = self.get(id)
         path = Path(ctx['path'])
         messages, skipped = [], 0
-        cursor = int(cursor)
-        if cursor < 0:
+        if direction not in ('forward', 'older'):
+            raise ValueError('Invalid message direction')
+        cursor = int(cursor) if cursor is not None else None
+        if cursor is not None and cursor < 0:
             raise ValueError('Invalid cursor')
         if not ctx['readable']:
             return {'messages': [], 'next': None, 'notice': 'Binary provider state preserved. No readable transcript was found.'}
@@ -287,14 +318,40 @@ class Manager:
             if not isinstance(data, dict):
                 raise ValueError('Invalid session JSON')
             rows = data.get('messages', [])
-            for row in rows[cursor:cursor + 200]:
+            if direction == 'older':
+                end = min(cursor, len(rows)) if cursor is not None else len(rows)
+                start = max(0, end - 200)
+                page = rows[start:end]
+                nxt = start or None
+            else:
+                cursor = cursor or 0
+                page = rows[cursor:cursor + 200]
+                nxt = cursor + 200 if cursor + 200 < len(rows) else None
+            for row in page:
                 msg = message(row, ctx['provider'])
                 if msg:
                     messages.append(msg)
-            nxt = cursor + 200 if cursor + 200 < len(rows) else None
+        elif direction == 'older':
+            with path.open('rb') as f:
+                end = min(cursor, os.fstat(f.fileno()).st_size) if cursor is not None else os.fstat(f.fileno()).st_size
+                nxt = None
+                for start, line in reverse_lines(f, end):
+                    try:
+                        if line is None:
+                            skipped += 1
+                        elif line.strip():
+                            msg = message(json.loads(line), ctx['provider'])
+                            if msg:
+                                messages.append(msg)
+                    except (ValueError, UnicodeDecodeError, TypeError, AttributeError):
+                        skipped += 1
+                    nxt = start or None
+                    if len(messages) >= 200 or end - start >= 8 * 1024**2:
+                        break
+                messages.reverse()
         else:
             with path.open('rb') as f:
-                f.seek(cursor)
+                f.seek(cursor or 0)
                 budget = 0
                 while len(messages) < 200 and budget < 8 * 1024**2:
                     line = f.readline(16 * 1024**2)
