@@ -69,7 +69,10 @@ app.whenReady().then(async () => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   for (const name of ['scan', 'library', 'detail', 'annotate', 'files']) register(name, params => rpc(name, params));
-  for (const name of ['status', 'install', 'cancel']) register('setup' + name[0].toUpperCase() + name.slice(1), params => rpc('setup_' + name, params));
+  for (const name of ['status', 'install', 'cancel', 'prefer']) register('setup' + name[0].toUpperCase() + name.slice(1), params => rpc('setup_' + name, params));
+  for (const name of ['status', 'refresh', 'configure']) register('usage' + name[0].toUpperCase() + name.slice(1), params => rpc('usage_' + name, params));
+  register('catchupScheduleStatus', () => rpc('catchup_schedule_status'));
+  register('catchupScheduleConfigure', params => rpc('catchup_schedule_configure', params));
   for (const name of ['status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete']) register('catchup' + name[0].toUpperCase() + name.slice(1), params => rpc('catchup_' + name, params));
   for (const [name, method] of Object.entries({ sshAdd: 'ssh_add', sshRemove: 'ssh_remove', sshRefresh: 'ssh_refresh', sshAliases: 'ssh_aliases', localNetworks: 'local_networks', scanNetwork: 'scan_network' })) register(name, params => rpc(method, params));
   register('handoffRelease', async id => {
@@ -226,8 +229,13 @@ app.whenReady().then(async () => {
         document.querySelector('[data-view="setup"]').click();
         for (let i = 0; i < 40 && !setupState; i++) await delay(50);
         if (document.querySelectorAll('#setup-view .transfer-card').length !== 3) throw new Error('Provider setup cards missing');
+        document.querySelector('[data-view="usage"]').click();
+        for (let i = 0; i < 100 && (!usageState || usageState.running); i++) { await delay(100); await loadUsage(); }
+        if (document.querySelectorAll('#usage-view progress').length !== 2) throw new Error('Usage quota bars missing');
         document.querySelector('[data-view="catchup"]').click();
         for (let i = 0; i < 40 && !catchupLoaded; i++) await delay(50);
+        for (let i = 0; i < 40 && !recapScheduleLoaded; i++) await delay(50);
+        if (!document.querySelector('#recap-schedule-status') || !document.querySelector('#catchup-view').textContent.includes('One recap, all your services.')) throw new Error('Daily recap controls or aside missing');
         document.querySelector('#catchup-period').value = 'seven';
         document.querySelector('#catchup-review').click();
         for (let i = 0; i < 120 && !document.querySelector('#catchup-generate'); i++) await delay(100);
@@ -269,6 +277,8 @@ app.whenReady().then(async () => {
         document.querySelector('#terminal-dock').classList.add('hidden');
         return { search: true, cloudUI: true, pty: true, terminalExit: true };
       })()`);
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'usage') await win.webContents.executeJavaScript("state.view = 'usage'; render();");
+      if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'schedule') await win.webContents.executeJavaScript("state.view = 'catchup'; render(); document.querySelector('#recap-schedule').open = true; window.scrollTo(0, 0);");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'setup') await win.webContents.executeJavaScript("state.view = 'setup'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'cloud') await win.webContents.executeJavaScript("state.view = 'cloud'; render();");
       if (process.env.GPT_MANAGER_SCREENSHOT_VIEW === 'locations') await win.webContents.executeJavaScript("state.view = 'locations'; render();");

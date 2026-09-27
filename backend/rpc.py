@@ -17,6 +17,8 @@ from teleport import Teleport, git_check
 from network import local_networks, scan_network
 from catchup import CatchUp
 from providers import ProviderSetup
+from recap_schedule import RecapSchedule
+from usage import Usage
 
 p = argparse.ArgumentParser()
 p.add_argument('--data', required=True)
@@ -29,10 +31,14 @@ remote = RemoteLocations(manager, progress=lambda message: print(json.dumps({'ev
 teleport = Teleport(remote)
 setup = ProviderSetup(manager.data)
 catchup = CatchUp(remote, manager_lock, setup)
-signal.signal(signal.SIGTERM, lambda *_: (setup.close(), catchup.close(), cloud.close(), sys.exit(0)))
+usage = Usage(manager.data, setup)
+schedule = RecapSchedule(catchup)
+schedule.start()
+signal.signal(signal.SIGTERM, lambda *_: (usage.close(), schedule.close(), setup.close(), catchup.close(), cloud.close(), sys.exit(0)))
 cloud_methods = {f'cloud_{name}': getattr(cloud, name) for name in ('status', 'connect', 'answer', 'cancel', 'folder', 'configure', 'configure_google', 'disconnect', 'sync', 'tick')}
-setup_methods = {'setup_status': setup.status, 'setup_install': setup.install, 'setup_cancel': setup.cancel, 'provider_command': lambda provider: {'argv': setup.command(provider), 'env': setup.environment()}}
+setup_methods = {'setup_status': setup.status, 'setup_install': setup.install, 'setup_cancel': setup.cancel, 'setup_prefer': setup.prefer, 'usage_status': usage.status, 'usage_refresh': usage.refresh, 'usage_configure': usage.configure, 'provider_command': lambda provider: {'argv': setup.command(provider), 'env': setup.environment()}}
 catchup_methods = {f'catchup_{name}': getattr(catchup, name) for name in ('status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete')}
+catchup_methods.update({'catchup_schedule_status': schedule.status, 'catchup_schedule_configure': schedule.configure})
 methods = {name: getattr(manager, name) for name in ('scan', 'library', 'detail', 'annotate', 'add_root', 'files', 'export', 'preview', 'import_archive', 'restore')}
 methods.update({'project_folder': lambda **params: project_folder(manager, **params), 'plan_move': lambda **params: plan_move(manager, **params), 'move_files': lambda **params: move_files(manager, **params)})
 methods.update({'scan': remote.scan, 'library': remote.library,
@@ -65,6 +71,8 @@ for line in sys.stdin:
         response = {'id': request.get('id'), 'error': str(e)}
     print(json.dumps(response, ensure_ascii=False), flush=True)
 
+usage.close()
+schedule.close()
 setup.close()
 catchup.close()
 cloud.close()

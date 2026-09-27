@@ -39,8 +39,14 @@ for provider, title, name in contexts:
 bin_dir = root / 'bin'; bin_dir.mkdir(exist_ok=True)
 cli = bin_dir / 'codex'
 cli.write_text('''#!/usr/bin/env python3
-import os,sys,json
+import os,sys,json,time
 from pathlib import Path
+if len(sys.argv)>1 and sys.argv[1]=='app-server':
+ for line in sys.stdin:
+  value=json.loads(line)
+  if value['method']=='initialize': print(json.dumps({'id':value['id'],'result':{}}),flush=True)
+  elif value['method']=='account/rateLimits/read': print(json.dumps({'id':value['id'],'result':{'rateLimits':{'primary':{'usedPercent':27,'windowDurationMins':300,'resetsAt':int(time.time())+7200},'secondary':{'usedPercent':16,'windowDurationMins':10080,'resetsAt':int(time.time())+86400*4}}}}),flush=True)
+ sys.exit(0)
 if len(sys.argv)>1 and sys.argv[1]=='exec':
  text=sys.stdin.read()
  evidence=json.loads(text.split('BEGIN QUOTED EVIDENCE\\n',1)[1].split('\\nEND QUOTED EVIDENCE',1)[0])

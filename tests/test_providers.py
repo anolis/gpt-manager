@@ -83,3 +83,14 @@ class ProviderTests(unittest.TestCase):
         self.assertIsNotNone(process)
         self.setup.cancel(); thread.join(8)
         self.assertFalse(thread.is_alive()); self.assertEqual(errors, ['canceled']); self.assertIsNotNone(process.poll())
+
+    def test_existing_cli_preferred_unless_user_selects_managed(self):
+        with patch.object(self.setup, 'existing_command', return_value=['/existing/codex']), patch.object(self.setup, 'managed_command', return_value=['/managed/codex']):
+            self.assertEqual(self.setup.command('codex'), ['/existing/codex'])
+            self.setup.prefer('codex', 'managed')
+            self.assertEqual(self.setup.command('codex'), ['/managed/codex'])
+            self.setup.prefer('codex', 'existing')
+            self.assertEqual(self.setup.command('codex'), ['/existing/codex'])
+    def test_managed_is_fallback_if_no_existing_cli(self):
+        with patch.object(self.setup, 'existing_command', return_value=None), patch.object(self.setup, 'managed_command', return_value=['/managed/codex']):
+            self.assertEqual(self.setup.command('codex'), ['/managed/codex'])

@@ -48,6 +48,18 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
       folders.set(id, cwd);
     }
     if (context.provider === 'codex') command.args.push('--cd', cwd);
+    if (context.provider === 'claude' && (await rpc('usage_status')).claudeMeter) {
+      const capture = backendCommand('usage', app);
+      const argv = [capture.command, ...capture.args, path.join(process.env.GPT_MANAGER_DATA || app.getPath('userData'), 'usage', 'claude.json'), context.root];
+      const quote = text => "'" + text.replace(/'/g, "'\"'\"'") + "'";
+      let hook = argv.map(quote).join(' ');
+      if (process.platform === 'win32') {
+        const script = '& ' + argv.map(text => "'" + text.replace(/'/g, "''") + "'").join(' ');
+        hook = 'powershell.exe -NoProfile -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
+      }
+      command.args.push('--settings', JSON.stringify({ statusLine: { type: 'command', command: hook } }));
+    }
+
     const backend = backendCommand('lock', app);
     return { command: backend.command, args: [...backend.args, context.provider, context.sessionId, cwd, command.command, ...command.args], env: command.env, cwd, machine: context.machine };
   }

@@ -25,3 +25,17 @@
 
 #setup-view .transfer-card .button { margin-right: 8px; margin-bottom: 8px; }
 #setup-view > .button { margin: 16px 8px 16px 0; }
+
+.recap-schedule { margin-bottom: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+.recap-schedule summary { cursor: pointer; }
+.recap-schedule-form { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 16px 0; }
+.recap-schedule-form label { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+
+.usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
+.usage-card { padding: 24px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.usage-window { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 22px 0; }
+.usage-window progress { width: 100%; height: 12px; accent-color: #d3f49a; }
+.usage-window small { width: 100%; }
+.usage-meter-toggle { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+#usage-view > .button { margin-right: 8px; }
+.usage-card small { overflow-wrap: anywhere; }

@@ -123,17 +123,21 @@ class CatchUp:
         threading.Thread(target=work, daemon=True).start()
         return self.status()
 
-    def prepare(self, start, end, label, include_remote=False):
+    def prepare(self, start, end, label, include_remote=False, refresh_remote=False):
         time_window(start, end)
-        if not isinstance(label, str) or len(label) > 150 or not isinstance(include_remote, bool):
+        if not isinstance(label, str) or len(label) > 150 or not isinstance(include_remote, bool) or not isinstance(refresh_remote, bool):
             raise ValueError('Invalid recap range')
         def collect():
             with self.manager_lock:
-                self.remote.manager.scan()
-                contexts = self.remote.library()['contexts']
+                if include_remote and refresh_remote:
+                    self.remote.scan()
+                else:
+                    self.remote.manager.scan()
+                library = self.remote.library()
+                contexts = library['contexts']
             contexts = [c for c in contexts if include_remote or c['origin'] != 'remote']
             contexts.sort(key=lambda c: (c['origin'] == 'local', c['updated']), reverse=True)
-            sources, fingerprints, projects, warnings = [], set(), {}, []
+            sources, fingerprints, projects, warnings = [], set(), {}, list(library.get('warnings', [])) if include_remote else []
             read = chars = undated = partial = scanned = duplicates = skipped = 0
             for c in contexts[:SCAN_LIMIT]:
                 self._check_cancel()

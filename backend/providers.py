@@ -89,25 +89,43 @@ class ProviderSetup:
             return [str(node) if node.is_file() else shutil.which('node') or str(node), str(binary)]
         return [str(binary)]
 
-    def command(self, provider):
-        if provider not in (*PACKAGES, 'antigravity'): raise ValueError('Unknown provider')
+    def managed_command(self, provider):
         record = read_json(self.root / f'{provider}.json', {})
         folder = record.get('folder', '')
         if folder and Path(folder).name == folder:
             try: return self.package_command(self.root / folder, provider)
             except (ValueError, OSError, KeyError): pass
+        return None
+
+    def existing_command(self, provider):
         name = 'agy' if provider == 'antigravity' else provider
         binary = shutil.which(name)
         if binary and Path(binary).suffix.lower() not in ('.cmd', '.bat', '.ps1'):
             return [binary]
-        # npm's Windows shim cannot safely carry arbitrary JSON through cmd.exe.
         if binary and provider in PACKAGES:
             try: return self.package_command(Path(binary).parent, provider)
             except (ValueError, OSError): pass
-        # Native Claude install is often absent from a desktop launcher PATH.
         native = Path.home() / '.local/bin' / (name + ('.exe' if os.name == 'nt' else ''))
         if native.is_file(): return [str(native)]
+        return None
+
+    def command(self, provider):
+        if provider not in (*PACKAGES, 'antigravity'): raise ValueError('Unknown provider')
+        preference = read_json(self.root / 'preferences.json', {}).get(provider, 'existing')
+        managed = self.managed_command(provider)
+        command = managed if preference == 'managed' else self.existing_command(provider) or managed
+        if command: return command
         raise ValueError('Open AI setup to install this provider, then sign in.')
+
+    def prefer(self, provider, source):
+        if provider not in PACKAGES or source not in ('existing', 'managed'): raise ValueError('Choose an installed provider source.')
+        if source == 'managed' and not self.managed_command(provider): raise ValueError('Install a managed copy first.')
+        if source == 'existing' and not self.existing_command(provider): raise ValueError('No existing CLI was found. Install one and refresh, or use a managed copy.')
+        with self.lock:
+            preferences = read_json(self.root / 'preferences.json', {})
+            preferences[provider] = source
+            atomic_json(self.root / 'preferences.json', preferences)
+        return self.status()
 
     def status(self):
         providers = []
@@ -115,7 +133,8 @@ class ProviderSetup:
             try: command = self.command(provider)
             except ValueError: command = None
             record = read_json(self.root / f'{provider}.json', {})
-            providers.append({'id': provider, 'available': bool(command), 'managed': bool(record and command), 'version': record.get('version', '')})
+            existing = self.existing_command(provider); managed = self.managed_command(provider)
+            providers.append({'id': provider, 'available': bool(command), 'managed': bool(managed and command == managed), 'version': record.get('version', '') if command == managed else '', 'existingAvailable': bool(existing), 'managedAvailable': bool(managed), 'executable': command[-1] if command else ''})
         with self.lock: return {'providers': providers, 'job': copy.deepcopy(self.job)}
 
     def _check(self):
@@ -206,6 +225,9 @@ class ProviderSetup:
             with self.lock:
                 self._check()
                 atomic_json(self.root / f'{provider}.json', {'folder': stage.name, 'version': metadata.get('version', '')})
+                preferences = read_json(self.root / 'preferences.json', {})
+                preferences[provider] = 'managed'
+                atomic_json(self.root / 'preferences.json', preferences)
                 stage = None  # Keep older versions too: a running terminal may still use one.
                 self.job.update(status='complete', message='Installed. Choose Sign in to connect your account.', percent=100)
         except InterruptedError as error:

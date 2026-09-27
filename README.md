@@ -24,7 +24,7 @@ If your npm configuration disables install scripts, download Electron's runtime 
 node node_modules/electron/install.js
 ```
 
-Use **AI setup** to install Codex, Claude Code, or Gemini CLI and sign in inside the embedded terminal. Existing installations on PATH are also supported. GPT Manager preserves provider approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. Browsing uses no network service and loads no remote UI. Cloud sync is opt-in: the connector runs an authenticated service on an ephemeral localhost port and sends only selected context archives to your chosen cloud. Provider sign-in can briefly use an OAuth callback port. Resuming a provider uses that provider's normal network behavior.
+Use **AI setup** to install Codex, Claude Code, or Gemini CLI and sign in inside the embedded terminal. Existing installations on PATH are preferred by default. AI setup lets you explicitly install/select a managed copy or switch back; running terminals keep their current client. GPT Manager preserves provider approval controls; it does not need a separate API key. `GPT_MANAGER_PYTHON` can select a Python executable. Browsing uses no network service and loads no remote UI. Cloud sync is opt-in: the connector runs an authenticated service on an ephemeral localhost port and sends only selected context archives to your chosen cloud. Provider sign-in can briefly use an OAuth callback port. Resuming a provider uses that provider's normal network behavior.
 
 ## What works
 
@@ -90,6 +90,16 @@ npm run dist:win
 
 The NSIS installer appears in `dist`. CI builds on a native Windows runner, tests locks, archives, official CLI installation, the packaged backend, and ConPTY input/resize/exit, then uploads the installer artifact. Python is frozen with PyInstaller and shipped alongside Electron. Code signing is not configured yet. Account sign-in and real provider resume still need interactive Windows user validation.
 
+## Provider usage
+
+Open **Usage** for provider-reported remaining allowance, quota windows, and natural reset times in your local timezone. These are account quotas, not context-window fullness or estimates from transcript token counts. Only local CLI accounts are queried; remote SSH accounts are separate.
+
+- **Codex:** reads the signed-in CLI's [account/rateLimits/read](https://learn.chatgpt.com/docs/app-server) over stdio, without starting a thread or model turn. Refreshes once a minute while the tab is visible, with a 30-second minimum interval. API-key accounts may not expose subscription limits.
+- **Claude:** enable **Claude usage meter** and restart a local Claude terminal launched by the manager. The [official status-line fields](https://code.claude.com/docs/en/statusline) report 5-hour/7-day or gateway spend limits after an API response when available. The manager supplies a per-session status line, leaving your settings file unchanged; it replaces a custom status line for those sessions. Only quota values, reset times, reporting store and capture time are cached, never the status-line input or transcript. Requires a recent CLI (documented fields require v2.1.251+) and a supported account. Shows the last reporting store if you use multiple accounts.
+- **Gemini / Antigravity:** automated quota adapters are not integrated. The tab shows an explicit unavailable state. Gemini's `/stats model` displays quota in its own CLI.
+
+Every snapshot has its capture time. Expired windows show **awaiting a fresh report**, rather than claiming the quota has refilled. Failed refreshes retain the last report with an error message.
+
 ## Catch up: daily and weekly work recaps
 
 Open **Catch up** to reconstruct your own working context across projects. Choose **Yesterday**, **Today**, **Last 7 days**, **Last week (Monday–Sunday)**, or custom dates up to 93 days. Day boundaries use the desktop’s local timezone, including daylight-saving changes.
@@ -104,6 +114,12 @@ Generation uses a separate temporary working directory and does not resume/edit 
 Coverage is deliberately bounded: up to 250 histories and 128 MiB per review, the latest 4 MiB of each JSONL history (JSON files must fit within 4 MiB), up to 6,000 excerpt characters per conversation, and at most 24 conversations / 100,000 input characters per recap. Earlier activity outside a sampled tail can be missing; coverage warnings appear in both preview and saved recap. Raw tool output, undated messages and opaque provider stores are not used. Recaps are on-demand, not scheduled, and local-model generation is not implemented yet.
 
 Saved recaps live in `<manager data>/catch-up` with private directory/file permissions. They include conversation excerpts, are not encrypted, and are not included in context exports or cloud sync. Preview data remains in memory. Cancellation stops the summary subprocess; a five-minute timeout and bounded output prevent a stuck provider from running indefinitely. Tests cover actual subprocess orchestration using a synthetic provider, date/DST boundaries, deduplication, citation validation, persistence and cancellation. Live-account summary generation still needs user validation.
+
+### Automatic daily recaps
+
+In **Catch up → Automatic daily recap**, choose a local time (default 09:00), Codex or Claude, and optional model/SSH histories, enable the schedule and save. It starts disabled. Enabling authorizes sending sampled excerpts and project labels from all readable local/imported histories (including archived contexts) automatically without manual selection; the same coverage bounds, duplicate filtering and provider charges apply. One provider can summarize all supported services.
+
+It summarizes **yesterday**, saves the result in **Saved recaps**, and runs while the app is open or minimized. If opened after the scheduled time it runs then; it does not backfill older missed days. No dated activity means no model call. Manual work already in progress defers the scheduled start. Attempts are recorded before starting, so failures, cancellation and restarts do not silently retry/bill again that day. Turn the schedule off to cancel a daily run. Use a manual recap to retry. Schedule times follow the computer's local timezone, including daylight-saving transitions.
 
 ## SSH context locations and Resume here
 

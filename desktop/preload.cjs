@@ -1,7 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const call = name => (...args) => ipcRenderer.invoke(name, ...args);
 contextBridge.exposeInMainWorld('manager', {
+  usageStatus: call('usageStatus'), usageRefresh: call('usageRefresh'), usageConfigure: call('usageConfigure'),
+  setupPrefer: call('setupPrefer'),
   setupStatus: call('setupStatus'), setupInstall: call('setupInstall'), setupCancel: call('setupCancel'), providerSignIn: call('providerSignIn'),
+  catchupScheduleStatus: call('catchupScheduleStatus'), catchupScheduleConfigure: call('catchupScheduleConfigure'),
   catchupStatus: call('catchupStatus'), catchupPrepare: call('catchupPrepare'), catchupGenerate: call('catchupGenerate'), catchupCancel: call('catchupCancel'), catchupHistory: call('catchupHistory'), catchupGet: call('catchupGet'), catchupDelete: call('catchupDelete'),
   sshAdd: call('sshAdd'), sshRemove: call('sshRemove'), sshRefresh: call('sshRefresh'), resumeHere: call('resumeHere'),
   sshAliases: call('sshAliases'), localNetworks: call('localNetworks'), scanNetwork: call('scanNetwork'), handoffRelease: call('handoffRelease'),

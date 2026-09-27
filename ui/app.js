@@ -3,8 +3,8 @@ const api = window.manager;
 const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
 const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
-const titles = { setup: 'AI setup', catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
-const descriptions = { setup: 'Install your AI assistant, sign in, and get back to your projects.', catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
+const titles = { usage: 'Provider usage', setup: 'AI setup', catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
+const descriptions = { usage: 'Your remaining allowance and the next reset, reported by each provider.', setup: 'Install your AI assistant, sign in, and get back to your projects.', catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
 function button(text, className, handler) { const b = element('button', className, text); b.addEventListener('click', () => run(handler)); return b; }
 function bytes(n) { if (!n) return '0 B'; const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024))); return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${['B', 'KB', 'MB', 'GB'][i]}`; }
@@ -37,10 +37,12 @@ function providerLabel(provider) { const span = element('span', 'provider-label'
 function render() {
   $('#crumb').textContent = titles[state.view]; $('#page-title').textContent = titles[state.view]; $('#page-description').textContent = descriptions[state.view];
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
-  const library = !['locations', 'transfer', 'cloud', 'catchup', 'setup'].includes(state.view);
+  const library = !['locations', 'transfer', 'cloud', 'catchup', 'setup', 'usage'].includes(state.view);
   $('#library-view').classList.toggle('hidden', !library); $('#stats').classList.toggle('hidden', !library);
   $('#cloud-view').classList.toggle('hidden', state.view !== 'cloud');
   $('#catchup-view').classList.toggle('hidden', state.view !== 'catchup');
+  $('#usage-view').classList.toggle('hidden', state.view !== 'usage');
+  if (state.view === 'usage') loadUsage(true);
   $('#setup-view').classList.toggle('hidden', state.view !== 'setup');
   if (state.view === 'setup') loadSetup();
   if (state.view === 'catchup') renderCatchUp();
@@ -396,8 +398,11 @@ function renderCatchUp() {
     const status = element('div'); status.id = 'catchup-status'; status.setAttribute('role', 'status');
     const layout = element('div', 'catchup-layout'), main = element('div'), preview = element('div'), result = element('div'), history = element('aside', 'catchup-history'); preview.id = 'catchup-preview'; result.id = 'catchup-result'; history.id = 'catchup-history';
     main.append(preview, result); layout.append(main, history);
-    page.append(form, element('p', 'muted', 'Dates use your local timezone. Review reads conversation excerpts; Generate sends only your chosen excerpts and their labels to the selected provider. Provider usage limits and charges apply.'), status, layout);
+    const aside = element('aside', 'transfer-note'); aside.append(element('strong', '', 'One recap, all your services.'), element('p', '', 'You don’t need a separate summary for each service. Codex or Claude can summarize selected conversations from Codex, Claude, Gemini, and Antigravity together. The provider you choose receives those excerpts, even when they came from another service.'));
+    const schedule = element('details', 'recap-schedule'); schedule.id = 'recap-schedule'; schedule.append(element('summary', '', 'Automatic daily recap'), element('div'));
+    page.append(aside, schedule, form, element('p', 'muted', 'Dates use your local timezone. Review reads conversation excerpts; Generate sends only your chosen excerpts and their labels to the selected provider. Provider usage limits and charges apply.'), status, layout);
   }
+  loadRecapSchedule();
   paintCatchUp();
   if (!catchupLoaded && !catchupLoading) {
     catchupLoading = true;
@@ -516,7 +521,11 @@ function renderSetup() {
     card.append(element('h2', '', providers[provider.id]), element('p', 'muted', provider.available ? `${provider.managed ? 'Managed by GPT Manager' : 'Existing installation'}${provider.version ? ' · ' + provider.version : ''}. Sign-in is managed by the provider.` : 'Ready to install. GPT Manager downloads the official provider package and its dependencies.'));
     const install = button(provider.available ? 'Install latest managed version' : 'Install', 'button primary', async () => { setupState = await api.setupInstall({ provider: provider.id }); renderSetup(); }); install.disabled = running;
     const signIn = button('Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available;
-    card.append(install, signIn); cards.append(card);
+    card.append(install, signIn);
+    if (provider.existingAvailable && provider.managed) card.append(button('Use existing CLI', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'existing' }); catchupLoaded = false; renderSetup(); }));
+    if (provider.managedAvailable && !provider.managed) card.append(button('Use managed copy', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'managed' }); catchupLoaded = false; renderSetup(); }));
+    if (provider.executable) card.append(element('p', 'muted', 'Using: ' + provider.executable));
+    cards.append(card);
   }
   page.append(cards);
   const job = setupState?.job;
@@ -526,6 +535,86 @@ function renderSetup() {
     page.insertBefore(status, cards);
   }
   page.append(button('Refresh installation status', 'button', loadSetup), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
-  page.append(element('p', 'muted', 'Already installed a CLI yourself? GPT Manager can use existing installations. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
+  page.append(element('p', 'muted', 'An existing CLI on PATH is preferred by default. Installing a managed copy explicitly switches to it; you can switch back anytime. Running terminals keep their current client. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
 }
 setInterval(() => { if (setupState?.job?.status === 'running') loadSetup(); }, 1000);
+
+
+let recapScheduleLoaded = false, recapScheduleLoading = false, recapScheduleSummary = null;
+async function loadRecapSchedule() {
+  if (recapScheduleLoading || !$('#recap-schedule')) return;
+  recapScheduleLoading = true;
+  try {
+    const value = await api.catchupScheduleStatus();
+    if (!recapScheduleLoaded) { buildRecapSchedule(value); recapScheduleLoaded = true; }
+    paintRecapSchedule(value);
+  } catch (error) { toast(error.message, true); } finally { recapScheduleLoading = false; }
+}
+function buildRecapSchedule(value) {
+  const body = $('#recap-schedule > div');
+  const form = element('form', 'recap-schedule-form');
+  function field(title, input) { const label = element('label', '', title); label.append(input); form.append(label); return input; }
+  const enabled = element('input'); enabled.type = 'checkbox'; enabled.checked = value.enabled; field('Enable daily recaps', enabled);
+  const time = element('input'); time.type = 'time'; time.required = true; time.value = value.time; field('Local time', time);
+  const provider = element('select'); for (const id of ['codex', 'claude']) { const option = element('option', '', providers[id]); option.value = id; provider.append(option); } provider.value = value.provider; field('Generate with', provider);
+  const model = element('input'); model.placeholder = 'Provider default'; model.value = value.model; field('Model (optional)', model);
+  const remote = element('input'); remote.type = 'checkbox'; remote.checked = value.include_remote; field('Include connected SSH histories', remote);
+  const save = element('button', 'button primary', 'Save schedule'); save.type = 'submit'; form.append(save);
+  form.onsubmit = event => { event.preventDefault(); run(async () => { save.disabled = true; try { paintRecapSchedule(await api.catchupScheduleConfigure({ enabled: enabled.checked, time: time.value, provider: provider.value, model: model.value.trim(), include_remote: remote.checked })); toast(enabled.checked ? 'Daily recaps enabled.' : 'Daily recaps turned off.'); } finally { save.disabled = false; } }); };
+  const status = element('p', 'muted'); status.id = 'recap-schedule-status'; status.setAttribute('role', 'status');
+  body.append(element('p', 'muted', 'Each run summarizes yesterday across all readable local and imported chats, including archived chats. Enabling this sends sampled excerpts and project labels automatically to your chosen provider without individual review. Normal provider charges and limits apply. SSH histories are optional; the same coverage limits as manual recaps apply.'), form, element('p', 'muted', 'Runs while GPT Manager is open, including minimized. If you open it after the chosen time, it runs then for yesterday; older missed days are not backfilled. Failed or canceled runs are not retried automatically that day. Turn this off to cancel a daily run.'), status);
+}
+function paintRecapSchedule(value) {
+  const status = $('#recap-schedule-status'); if (!status) return;
+  status.textContent = `${value.enabled ? 'On · ' + value.time + ' local time · ' + providers[value.provider] : 'Off'}${value.lastAttempt ? ' · Last attempt: ' + value.lastAttempt : ''}${value.message ? ' · ' + value.message : ''}`;
+  if (value.summaryId && value.summaryId !== recapScheduleSummary) {
+    recapScheduleSummary = value.summaryId;
+    run(async () => { catchupHistory = await api.catchupHistory(); renderCatchupHistory(); });
+  }
+}
+setInterval(() => { if (state.view === 'catchup') loadRecapSchedule(); }, 3000);
+
+
+let usageLoading = false, usageState = null, usageLastRefresh = 0;
+async function loadUsage(refresh = false) {
+  if (usageLoading) return;
+  usageLoading = true;
+  try {
+    if (refresh && Date.now() - usageLastRefresh > 30000) { usageLastRefresh = Date.now(); usageState = await api.usageRefresh(); }
+    else usageState = await api.usageStatus();
+    renderUsage();
+  } catch (error) { toast(error.message, true); } finally { usageLoading = false; }
+}
+function resetText(seconds) {
+  if (!seconds) return 'Reset time not reported';
+  const left = Math.ceil(seconds - Date.now() / 1000), when = new Date(seconds * 1000).toLocaleString();
+  if (left <= 0) return `Reported reset: ${when} · awaiting a fresh report`;
+  const totalMinutes = Math.ceil(left / 60), hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
+  return `Resets naturally in ${hours ? hours + 'h ' : ''}${minutes}m · ${when}`;
+}
+function renderUsage() {
+  const page = $('#usage-view');
+  if (!page.childElementCount) {
+    page.append(element('p', 'transfer-note', 'These are provider-reported account limits, not context-window space or estimated token counts. Only local CLI accounts are shown. Shared account activity elsewhere may consume the same allowance. A reset passing does not prove the balance has refilled; wait for a fresh report.'));
+    page.append(button('Refresh usage', 'button', () => loadUsage(true)), button('AI setup', 'button', () => { state.view = 'setup'; render(); }));
+    const label = element('label', 'usage-meter-toggle'), meter = element('input'); meter.type = 'checkbox'; meter.checked = usageState.claudeMeter; meter.onchange = () => run(async () => { try { usageState = await api.usageConfigure({ claudeMeter: meter.checked }); renderUsage(); } catch (e) { meter.checked = !meter.checked; throw e; } });
+    label.append(meter, document.createTextNode('Enable Claude usage meter for new local manager terminals')); page.append(label, element('p', 'muted', 'This supplies a quota status line for Claude sessions launched here, replacing any custom status line for those sessions only. Your Claude settings file stays unchanged. Restart the terminal after changing this option. Requires a recent Claude CLI and an account that reports limits.'));
+    const cards = element('div', 'usage-grid'); cards.id = 'usage-cards'; page.append(cards);
+  }
+  const cards = $('#usage-cards'); cards.replaceChildren();
+  for (const provider of usageState.providers) {
+    const card = element('article', 'usage-card'); card.append(element('h2', '', providers[provider.id]));
+    if (provider.updated) card.append(element('small', 'muted', 'Last report: ' + new Date(provider.updated * 1000).toLocaleString()));
+    for (const window of provider.windows) {
+      const expired = window.resetsAt && window.resetsAt * 1000 <= Date.now();
+      const row = element('div', 'usage-window'); row.append(element('strong', '', window.label), element('span', '', expired ? 'Awaiting updated balance' : `${Number(window.remaining.toFixed(1))}% remaining`));
+      if (!expired) { const bar = element('progress'); bar.max = 100; bar.value = window.remaining; bar.setAttribute('aria-label', window.label + ' allowance remaining'); row.append(bar); }
+      row.append(element('small', 'muted', resetText(window.resetsAt))); card.append(row);
+    }
+    if (!provider.windows.length) card.append(element('p', 'muted', provider.id === 'codex' && usageState.running ? 'Reading account limits…' : 'Remaining allowance not available yet.'));
+    card.append(element('p', 'muted', provider.message));
+    if (provider.source) card.append(element('small', 'muted', 'Last reporting store: ' + provider.source));
+    cards.append(card);
+  }
+}
+setInterval(() => { if (state.view === 'usage') loadUsage(Date.now() - usageLastRefresh >= 60000); }, 3000);
