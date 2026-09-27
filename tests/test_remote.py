@@ -32,7 +32,7 @@ class RemoteTests(unittest.TestCase):
         source.parent.mkdir(parents=True)
         source.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'session-remote', 'cwd': str(self.project)}}) + '\n' + json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Remote conversation'}]}}) + '\n')
         self.source = source
-        self.manager = Manager(self.local, self.base / 'data'); self.manager.scan()
+        self.manager = Manager(self.local, self.local / '.config/gpt-manager'); self.manager.scan()
         self.remote = RemoteLocations(self.manager)
         self.transport = patch.object(self.remote, 'request', side_effect=self.request); self.transport.start()
         self.downloader = patch.object(self.remote, 'download', side_effect=self.download); self.downloader.start()
@@ -122,6 +122,118 @@ class RemoteTests(unittest.TestCase):
         self.assertTrue((destination / 'link').is_symlink())
         self.assertEqual((destination / 'link').read_text(), (self.project / 'source.py').read_text())
         self.assertEqual(self.remote.context(result['id'])['project'], str(destination))
+
+    def switch_hosts(self):
+        self.local, self.host = self.host, self.local
+        os.environ['HOME'] = str(self.local)
+        self.manager = Manager(self.local, self.local / '.config/gpt-manager'); self.manager.scan()
+        self.remote = RemoteLocations(self.manager)
+        request = patch.object(self.remote, 'request', side_effect=self.request)
+        download = patch.object(self.remote, 'download', side_effect=self.download)
+        request.start(); download.start()
+        self.addCleanup(request.stop); self.addCleanup(download.stop)
+        if not self.remote.endpoints(): self.remote.add('fixture-host')
+        else: self.remote.scan()
+        self.context = next(c for c in self.remote.library()['contexts'] if c['origin'] == 'remote')
+
+    def prepare_return(self):
+        folder = self.local / 'checkout'; folder.mkdir()
+        result = Teleport(self.remote).run(self.context['id'], str(folder))
+        path = Path(self.remote.context(result['id'])['path'])
+        path.write_text(path.read_text() + json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Work done on laptop'}]}}) + '\n')
+        self.latest = path.read_bytes()
+        self.original = self.source.read_bytes()
+        self.switch_hosts()
+        return self.project
+
+    def test_round_trip_restores_latest_history_and_can_travel_again(self):
+        folder = self.prepare_return()
+        # Legacy markers had no machine ID; the original receipt still proves lineage.
+        from backend.session_lock import lock_paths
+        marker = lock_paths('codex', 'session-remote')[1]
+        previous = json.loads(marker.read_text()); previous.pop('targetMachineId')
+        marker.write_text(json.dumps(previous))
+        result = Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertEqual(self.source.read_bytes(), self.latest)
+        self.assertIsNone(handoff_status('codex', 'session-remote'))
+        self.assertEqual(self.remote.context(self.context['id'])['handoff']['state'], 'moved')
+        with zipfile.ZipFile(result['backup']) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            self.assertEqual(archive.read(manifest['contexts'][0]['main']), self.original)
+        self.switch_hosts()
+        again = Teleport(self.remote).run(self.context['id'], str(self.local / 'checkout'))
+        self.assertEqual(Path(self.remote.context(again['id'])['path']).read_bytes(), self.latest)
+        self.assertIsNone(handoff_status('codex', 'session-remote'))
+
+    def test_return_rejects_changed_retained_copy(self):
+        folder = self.prepare_return()
+        self.source.write_bytes(self.original + b'{"changed":true}\n')
+        with self.assertRaisesRegex(ValueError, 'retained source changed'):
+            Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertEqual(self.source.read_bytes(), self.original + b'{"changed":true}\n')
+
+    def test_return_rejects_missing_original_receipt(self):
+        folder = self.prepare_return()
+        for receipt in (self.host / '.config/gpt-manager/handoffs').glob('*.json'): receipt.unlink()
+        with self.assertRaisesRegex(ValueError, 'original handoff receipt'):
+            Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertEqual(self.source.read_bytes(), self.original)
+        self.assertIsNotNone(handoff_status('codex', 'session-remote'))
+
+    def test_return_rejects_receipt_for_different_machine_or_session(self):
+        folder = self.prepare_return()
+        receipt_path = next((self.host / '.config/gpt-manager/handoffs').glob('*.json'))
+        original = json.loads(receipt_path.read_text())
+        for key in ('machineId', 'localId'):
+            receipt = json.loads(json.dumps(original))
+            if key == 'machineId': receipt['context'][key] = 'another-machine'
+            else: receipt[key] = 'another-session'
+            receipt_path.write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(ValueError, 'original handoff receipt'):
+                Teleport(self.remote).run(self.context['id'], str(folder))
+            self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_return_respects_live_lock_on_both_hosts(self):
+        folder = self.prepare_return()
+        from backend.session_lock import lock_paths
+        marker = json.loads(lock_paths('codex', 'session-remote')[1].read_text())
+        with context_lock('codex', 'session-remote', marker['token']):
+            with self.assertRaisesRegex(ValueError, 'already running'):
+                Teleport(self.remote).run(self.context['id'], str(folder))
+        with patch.dict(os.environ, {'HOME': str(self.host)}):
+            lock = context_lock('codex', 'session-remote')
+            lock.__enter__()
+        try:
+            with self.assertRaisesRegex(ValueError, 'already running'):
+                Teleport(self.remote).run(self.context['id'], str(folder))
+        finally:
+            lock.__exit__(None, None, None)
+        self.assertEqual(self.source.read_bytes(), self.original)
+
+    def test_return_finalize_failure_keeps_remote_reserved(self):
+        folder = self.prepare_return()
+        def request(endpoint, operation):
+            if operation['operation'] == 'finish': raise ValueError('Offline')
+            return self.request(endpoint, operation)
+        with patch.object(self.remote, 'request', side_effect=request):
+            result = Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertTrue(result['warning'])
+        self.assertEqual(self.source.read_bytes(), self.latest)
+        self.assertIsNone(handoff_status('codex', 'session-remote'))
+        self.assertEqual(self.remote.context(self.context['id'])['handoff']['state'], 'reserved')
+
+    def test_failed_return_rolls_back_retained_copy_and_allows_retry(self):
+        folder = self.prepare_return()
+        with patch.object(self.manager, 'restore', side_effect=OSError('Disk full')):
+            with self.assertRaisesRegex(OSError, 'Disk full'):
+                Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertEqual(self.source.read_bytes(), self.original)
+        self.assertIsNotNone(handoff_status('codex', 'session-remote'))
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
+        result = Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertIsNone(result['warning'])
+        self.assertEqual(self.source.read_bytes(), self.latest)
 
     def test_failed_transfer_releases_source(self):
         folder = self.local / 'checkout'; folder.mkdir()

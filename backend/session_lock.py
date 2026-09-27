@@ -24,7 +24,7 @@ def handoff_status(provider, session_id):
         return None
     try:
         value = json.loads(marker.read_text())
-        return {'target': value['target'], 'state': value['state']}
+        return {'target': value['target'], 'state': value['state'], 'targetMachineId': value.get('targetMachineId')}
     except (OSError, ValueError, KeyError):
         return {'target': 'another machine', 'state': 'reserved'}
 
@@ -48,7 +48,7 @@ def context_lock(provider, session_id, token=None):
         if marker.exists():
             state = json.loads(marker.read_text())
             if not token or token != state.get('token'):
-                raise ValueError(f"This context was handed off or reserved for {state.get('target', 'another machine')}. Stop the destination session and explicitly release the handoff before resuming the source.")
+                raise ValueError(f"This context was handed off or reserved for {state.get('target', 'another machine')}. To bring back the latest history, stop that session and select its SSH copy, then Resume here. Release handoff only to reopen this retained, older copy.")
         yield marker
     finally:
         os.close(fd)

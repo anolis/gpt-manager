@@ -1,18 +1,21 @@
-"""Explicit SSH handoff into a selected local project, without overwriting contexts."""
+"""Explicit SSH handoff, including verified returns to a retained source copy."""
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
 from pathlib import Path
 
 try:
-    from .manager import atomic_json
+    from .manager import atomic_json, read_json, digest
     from .workspace_transfer import extract_workspace
-    from .session_lock import context_lock
+    from .session_lock import context_lock, lock_paths
+    from .ssh_agent import source_fingerprint
 except ImportError:
-    from manager import atomic_json
+    from manager import atomic_json, read_json, digest
     from workspace_transfer import extract_workspace
-    from session_lock import context_lock
+    from session_lock import context_lock, lock_paths
+    from ssh_agent import source_fingerprint
 
 
 def git_check(folder, pull=False):
@@ -55,10 +58,17 @@ class Teleport:
 
     def run(self, id, folder, copy_workspace=False):
         c = self.remote.context(id)
-        with context_lock(c['provider'], c['sessionId']):
-            return self._run(id, folder, copy_workspace)
+        if c['origin'] != 'remote':
+            raise ValueError('Resume here is for contexts on SSH endpoints.')
+        # Reading the token is only permission to inspect a possible return under
+        # the lock. The original receipt is verified on the other host before any
+        # native files change. Ordinary resume still cannot bypass this marker.
+        marker = lock_paths(c['provider'], c['sessionId'], create=False)[1]
+        previous = read_json(marker, {})
+        with context_lock(c['provider'], c['sessionId'], previous.get('token')):
+            return self._run(id, folder, copy_workspace, marker, read_json(marker, {}))
 
-    def _run(self, id, folder, copy_workspace=False):
+    def _run(self, id, folder, copy_workspace=False, marker=None, previous=None):
         c = self.remote.context(id)
         if c['origin'] != 'remote':
             raise ValueError('Resume here is for contexts on SSH endpoints.')
@@ -70,9 +80,16 @@ class Teleport:
             raise ValueError('Choose an empty folder for the remote work folder.')
         if c['machineId'] == self.remote.machine['id']:
             raise ValueError('This endpoint is the current machine. Resume its local context instead.')
-        # Never replace a local session, even if its history currently looks identical.
         self.manager.scan()
-        if any(x['origin'] == 'local' and x['provider'] == c['provider'] and x['sessionId'] == c['sessionId'] for x in self.manager.contexts.values()):
+        copies = [x for x in self.manager.library()['contexts'] if x['origin'] == 'local' and x['provider'] == c['provider'] and x['sessionId'] == c['sessionId']]
+        retained = None
+        if previous:
+            if (len(copies) != 1 or previous.get('state') not in ('moved', 'reserved')
+                    or (previous.get('targetMachineId') and previous['targetMachineId'] != c['machineId'])
+                    or previous.get('source') != source_fingerprint(self.manager, copies[0])):
+                raise ValueError('The retained source changed or belongs to another handoff. Keep both histories and inspect them before recovery; no files were replaced.')
+            retained = copies[0]
+        elif copies:
             raise ValueError('A local native copy of this session already exists. Resume that copy or resolve it before teleporting; automatic merging is not supported.')
         if c['provider'] == 'antigravity' and not c['root'].endswith('antigravity-cli'):
             raise ValueError('IDE-only Antigravity state cannot be resumed in a CLI terminal.')
@@ -85,9 +102,13 @@ class Teleport:
         atomic_json(receipt_path, receipt)
         receipt_path.chmod(0o600)
         restored = False
+        removed = []
+        backup = None
         self.remote.progress('Reserving the source conversation…')
         try:
-            self.remote.request(endpoint, {**request, 'operation': 'reserve', 'target': self.remote.machine['name']})
+            self.remote.request(endpoint, {**request, 'operation': 'reserve', 'target': self.remote.machine['name'],
+                                          'targetMachineId': self.remote.machine['id'],
+                                          **({'previousToken': previous['token']} if retained else {})})
             with tempfile.TemporaryDirectory(dir=self.manager.data) as temp:
                 archive = Path(temp) / 'context.gptctx'
                 self.remote.progress('Downloading and validating the conversation…')
@@ -114,6 +135,34 @@ class Teleport:
                 roots = [root for provider, root in self.manager.default_roots() if provider == c['provider']]
                 root = roots[0]
                 root.mkdir(parents=True, exist_ok=True)
+                if retained:
+                    self.remote.progress('Backing up the retained copy before returning the conversation…')
+                    # Keep both a portable archive and byte-for-byte rollback files.
+                    # The receipt records every path before the first removal.
+                    backup = self.manager.data / 'handoff-backups' / token
+                    backup.mkdir(parents=True, mode=0o700)
+                    self.manager.export([retained['id']], backup / 'context.gptctx')
+                    files = self.manager.native_files(self.manager.get(retained['id']))
+                    if any(p.suffix == '.db' and any(Path(str(p) + suffix).exists() for suffix in ('-wal', '-shm')) for p, _ in files):
+                        raise ValueError('Close the retained conversation database and checkpoint it before returning this context.')
+                    saved = []
+                    for index, (path, _) in enumerate(files):
+                        copy = backup / str(index)
+                        shutil.copy2(path, copy)
+                        copy.chmod(0o600)
+                        if digest(copy) != digest(path):
+                            raise ValueError('Retained context changed during backup. Stop external sessions and retry.')
+                        saved.append((path, copy))
+                    if previous['source'] != source_fingerprint(self.manager, retained):
+                        raise ValueError('Retained context changed during backup. Stop external sessions and retry.')
+                    receipt.update(backup=str(backup / 'context.gptctx'), previousHandoff=previous,
+                                   retainedFiles=[{'path': str(p), 'backup': str(b)} for p, b in saved], state='return-backed-up')
+                    atomic_json(receipt_path, receipt)
+                    # Restore to the existing configured store, including custom roots.
+                    root = Path(retained['root'])
+                    for path, copy in saved:
+                        path.unlink()
+                        removed.append((path, copy))
                 self.manager.restore(imported['id'], str(root), project_folder=str(destination))
                 restored = True
                 receipt['state'] = 'restored'
@@ -135,10 +184,29 @@ class Teleport:
                     receipt['state'] = 'restored-source-reserved'
                     warning = f'Local restore succeeded, but source confirmation failed: {error}. The source remains reserved. Compare histories before releasing it if the source changed during transfer.'
                 atomic_json(receipt_path, receipt)
+                if retained:
+                    marker.unlink()
                 self.remote.refresh(endpoint['id'])
-                return {'id': local['id'], 'library': self.remote.library(), 'warning': warning}
+                return {'id': local['id'], 'library': self.remote.library(), 'warning': warning,
+                        'backup': str(backup / 'context.gptctx') if backup else None}
         except Exception as error:
             if not restored:
+                if removed:
+                    try:
+                        for path, copy in removed:
+                            with path.open('xb') as out, copy.open('rb') as inp:
+                                shutil.copyfileobj(inp, out)
+                            shutil.copystat(copy, path)
+                        self.manager.scan()
+                        # Restoring bytes changes inodes; retain the handoff with
+                        # the restored copy's fingerprint so another retry is safe.
+                        previous['source'] = source_fingerprint(self.manager, retained)
+                        atomic_json(marker, previous)
+                        marker.chmod(0o600)
+                    except Exception:
+                        receipt['state'] = 'return-rollback-needs-attention'
+                        atomic_json(receipt_path, receipt)
+                        raise ValueError(f'Return interrupted. Both hosts remain reserved; recovery files are at {backup}. Inspect the handoff receipt before retrying.') from None
                 try:
                     self.remote.request(endpoint, {**request, 'operation': 'release'})
                     receipt['state'] = 'canceled'

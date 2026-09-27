@@ -60,10 +60,20 @@ def ssh_dispatch(request):
                 raise ValueError('SSH machine identity changed. Refresh before transferring.')
             provider, sid, token = context['provider'], context['sessionId'], request.get('token')
             if operation == 'reserve':
+                previous = request.get('previousToken')
+                if previous is not None:
+                    if not isinstance(previous, str) or not re.fullmatch(r'[a-f0-9]{32}', previous):
+                        raise ValueError('Invalid return handoff token')
+                    receipt = read_json(existing / 'handoffs' / (previous + '.json'), {})
+                    if (receipt.get('localId') != context_id
+                            or receipt.get('context', {}).get('machineId') != request.get('targetMachineId')
+                            or receipt.get('state') not in ('complete', 'restored-source-reserved')):
+                        raise ValueError('Cannot verify the original handoff receipt on this machine. Keep both histories and inspect them before recovery.')
                 reserve_handoff(provider, sid, token, request.get('target'))
                 with context_lock(provider, sid, token) as marker:
                     value = json.loads(marker.read_text())
                     value['source'] = source_fingerprint(manager, context)
+                    value['targetMachineId'] = request.get('targetMachineId')
                     atomic_json(marker, value)
                     marker.chmod(0o600)
                 return {'reserved': True}
