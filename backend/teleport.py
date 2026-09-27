@@ -56,7 +56,7 @@ class Teleport:
         self.remote = remote
         self.manager = remote.manager
 
-    def run(self, id, folder, copy_workspace=False):
+    def run(self, id, folder, copy_workspace=False, discard_local_changes=False, expected_local=None):
         c = self.remote.context(id)
         if c['origin'] != 'remote':
             raise ValueError('Resume here is for contexts on SSH endpoints.')
@@ -66,9 +66,9 @@ class Teleport:
         marker = lock_paths(c['provider'], c['sessionId'], create=False)[1]
         previous = read_json(marker, {})
         with context_lock(c['provider'], c['sessionId'], previous.get('token')):
-            return self._run(id, folder, copy_workspace, marker, read_json(marker, {}))
+            return self._run(id, folder, copy_workspace, marker, read_json(marker, {}), discard_local_changes, expected_local)
 
-    def _run(self, id, folder, copy_workspace=False, marker=None, previous=None):
+    def _run(self, id, folder, copy_workspace=False, marker=None, previous=None, discard_local_changes=False, expected_local=None):
         c = self.remote.context(id)
         if c['origin'] != 'remote':
             raise ValueError('Resume here is for contexts on SSH endpoints.')
@@ -83,12 +83,24 @@ class Teleport:
         self.manager.scan()
         copies = [x for x in self.manager.library()['contexts'] if x['origin'] == 'local' and x['provider'] == c['provider'] and x['sessionId'] == c['sessionId']]
         retained = None
+        local_snapshot = None
+        local_changed = False
         if previous:
-            if (len(copies) != 1 or previous.get('state') not in ('moved', 'reserved')
-                    or (previous.get('targetMachineId') and previous['targetMachineId'] != c['machineId'])
-                    or previous.get('source') != source_fingerprint(self.manager, copies[0])):
-                raise ValueError('The retained source changed or belongs to another handoff. Keep both histories and inspect them before recovery; no files were replaced.')
+            if len(copies) != 1:
+                raise ValueError(f'Expected one retained local conversation, found {len(copies)}. Refresh and inspect the provider context stores; changing the project folder does not remove stored conversations.')
+            if (previous.get('state') not in ('moved', 'reserved')
+                    or (previous.get('targetMachineId') and previous['targetMachineId'] != c['machineId'])):
+                raise ValueError('This local conversation belongs to another handoff. Select the SSH copy on its recorded destination machine.')
             retained = copies[0]
+            local_snapshot = source_fingerprint(self.manager, retained)
+            local_changed = previous.get('source') != local_snapshot
+            if discard_local_changes and expected_local != local_snapshot:
+                raise ValueError('The local conversation changed again after confirmation. Stop local provider sessions and retry Resume here.')
+            if local_changed and not discard_local_changes:
+                # No reservations or writes have occurred. Electron presents the
+                # choice, then sends this exact snapshot back with confirmation.
+                return {'conflict': 'retained-changed', 'localPath': retained['path'],
+                        'sourceMachine': c['machine'], 'expectedLocal': local_snapshot}
         elif copies:
             raise ValueError('A local native copy of this session already exists. Resume that copy or resolve it before teleporting; automatic merging is not supported.')
         if c['provider'] == 'antigravity' and not c['root'].endswith('antigravity-cli'):
@@ -153,9 +165,9 @@ class Teleport:
                         if digest(copy) != digest(path):
                             raise ValueError('Retained context changed during backup. Stop external sessions and retry.')
                         saved.append((path, copy))
-                    if previous['source'] != source_fingerprint(self.manager, retained):
+                    if local_snapshot != source_fingerprint(self.manager, retained):
                         raise ValueError('Retained context changed during backup. Stop external sessions and retry.')
-                    receipt.update(backup=str(backup / 'context.gptctx'), previousHandoff=previous,
+                    receipt.update(backup=str(backup / 'context.gptctx'), previousHandoff=previous, discardedLocalChanges=local_changed,
                                    retainedFiles=[{'path': str(p), 'backup': str(b)} for p, b in saved], state='return-backed-up')
                     atomic_json(receipt_path, receipt)
                     # Restore to the existing configured store, including custom roots.
@@ -200,7 +212,8 @@ class Teleport:
                         self.manager.scan()
                         # Restoring bytes changes inodes; retain the handoff with
                         # the restored copy's fingerprint so another retry is safe.
-                        previous['source'] = source_fingerprint(self.manager, retained)
+                        if not local_changed:
+                            previous['source'] = source_fingerprint(self.manager, retained)
                         atomic_json(marker, previous)
                         marker.chmod(0o600)
                     except Exception:

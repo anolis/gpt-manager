@@ -165,12 +165,67 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(Path(self.remote.context(again['id'])['path']).read_bytes(), self.latest)
         self.assertIsNone(handoff_status('codex', 'session-remote'))
 
-    def test_return_rejects_changed_retained_copy(self):
+    def test_return_requests_confirmation_for_changed_retained_copy(self):
         folder = self.prepare_return()
         self.source.write_bytes(self.original + b'{"changed":true}\n')
-        with self.assertRaisesRegex(ValueError, 'retained source changed'):
-            Teleport(self.remote).run(self.context['id'], str(folder))
+        result = Teleport(self.remote).run(self.context['id'], str(folder))
+        self.assertEqual(result['conflict'], 'retained-changed')
+        self.assertEqual(result['localPath'], str(self.source))
         self.assertEqual(self.source.read_bytes(), self.original + b'{"changed":true}\n')
+        self.assertFalse((self.manager.data / 'handoffs').exists())
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
+
+    def test_discard_local_changes_backs_up_changed_copy_and_uses_remote(self):
+        folder = self.prepare_return()
+        changed = self.original + b'{"changed":true}\n'
+        self.source.write_bytes(changed)
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        result = teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
+        self.assertEqual(self.source.read_bytes(), self.latest)
+        with zipfile.ZipFile(result['backup']) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            self.assertEqual(archive.read(manifest['contexts'][0]['main']), changed)
+        self.assertIsNone(handoff_status('codex', 'session-remote'))
+        self.assertEqual(self.remote.context(self.context['id'])['handoff']['state'], 'moved')
+
+    def test_discard_rejects_changes_after_confirmation(self):
+        folder = self.prepare_return()
+        self.source.write_bytes(self.original + b'{"changed":true}\n')
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        changed = self.source.read_bytes() + b'{"new":true}\n'
+        self.source.write_bytes(changed)
+        with self.assertRaisesRegex(ValueError, 'changed again after confirmation'):
+            teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
+        self.assertEqual(self.source.read_bytes(), changed)
+
+    def test_failed_discard_restores_changed_copy_and_requires_confirmation_again(self):
+        folder = self.prepare_return()
+        changed = self.original + b'{"changed":true}\n'
+        self.source.write_bytes(changed)
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        with patch.object(self.manager, 'restore', side_effect=OSError('Disk full')):
+            with self.assertRaisesRegex(OSError, 'Disk full'):
+                teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
+        self.assertEqual(self.source.read_bytes(), changed)
+        self.assertIsNotNone(handoff_status('codex', 'session-remote'))
+        self.assertEqual(teleport.run(self.context['id'], str(folder))['conflict'], 'retained-changed')
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
+
+    def test_discard_cannot_bypass_original_handoff_receipt(self):
+        folder = self.prepare_return()
+        changed = self.original + b'{"changed":true}\n'
+        self.source.write_bytes(changed)
+        teleport = Teleport(self.remote)
+        review = teleport.run(self.context['id'], str(folder))
+        for receipt in (self.host / '.config/gpt-manager/handoffs').glob('*.json'): receipt.unlink()
+        with self.assertRaisesRegex(ValueError, 'original handoff receipt'):
+            teleport.run(self.context['id'], str(folder), discard_local_changes=True, expected_local=review['expectedLocal'])
+        self.assertEqual(self.source.read_bytes(), changed)
 
     def test_return_rejects_missing_original_receipt(self):
         folder = self.prepare_return()

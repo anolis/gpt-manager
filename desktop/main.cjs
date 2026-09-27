@@ -111,7 +111,12 @@ app.whenReady().then(async () => {
         if (answer.response === 2) await rpc('git_check', { folder, pull: true });
       }
     }
-    return rpc('teleport', { id, folder, copy_workspace: mode.response === 2 });
+    const params = { id, folder, copy_workspace: mode.response === 2 };
+    const result = await rpc('teleport', params);
+    if (result.conflict !== 'retained-changed') return result;
+    const answer = await dialog.showMessageBox(win, { type: 'warning', message: 'The local conversation changed after the handoff', detail: `Use the conversation from ${result.sourceMachine} instead?\n\nThis replaces the local conversation, including any messages added here after the handoff. GPT Manager will save a recovery backup first. Your project files are not discarded. Stop any local provider session using this conversation before continuing.\n\nLocal conversation: ${result.localPath}`, buttons: ['Cancel', 'Trash local changes and continue'], defaultId: 0, cancelId: 0 });
+    if (answer.response !== 1) return null;
+    return rpc('teleport', { ...params, discard_local_changes: true, expected_local: result.expectedLocal });
   });
   register('addRoot', async provider => {
     const folder = await selectDirectory('Choose provider store: Codex home, Claude projects, Gemini tmp, or Antigravity data root');
