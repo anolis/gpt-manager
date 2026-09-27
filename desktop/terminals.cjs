@@ -61,7 +61,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
     }
 
     const backend = backendCommand('lock', app);
-    return { command: backend.command, args: [...backend.args, context.provider, context.sessionId, cwd, command.command, ...command.args], env: command.env, cwd, machine: context.machine };
+    return { command: backend.command, args: [...backend.args, context.provider, context.sessionId, cwd, command.command, ...command.args], env: command.env, cwd, machine: context.machine, provider: context.provider, managed: [command.command, ...command.args].some(arg => arg.startsWith(path.join(process.env.GPT_MANAGER_DATA || app.getPath('userData'), 'providers', context.provider + '-'))) };
   }
   function emit(session, channel, value) {
     if (!session.attached) { session.buffer.push([channel, value]); if (session.buffer.length > 256) session.buffer.shift(); }
@@ -72,7 +72,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
     if (sessions.size >= 8) throw new Error('Close a terminal tab before opening another (limit: 8).');
     const cfg = provided || await config(id); if (!cfg) return null;
     const token = randomUUID();
-    const session = { id, token, buffer: [], attached: false, exited: false }; sessions.set(token, session);
+    const session = { id, token, provider: cfg.provider, managed: cfg.managed, buffer: [], attached: false, exited: false }; sessions.set(token, session);
     try {
       if (process.platform === 'win32') {
         const pty = require('node-pty').spawn(cfg.command, cfg.args, { name: 'xterm-256color', cols: 100, rows: 24, cwd: cfg.cwd, env: cfg.env, useConpty: true });
@@ -105,7 +105,7 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
     const args = provider === 'codex' ? ['login'] : provider === 'claude' ? ['auth', 'login'] : [];
     const cwd = path.join(app.getPath('userData'), 'provider-sign-in'); fs.mkdirSync(cwd, { recursive: true });
     const env = { ...resolved.env }; delete env.CLAUDECODE;
-    return start('setup:' + provider, { command: resolved.argv[0], args: [...resolved.argv.slice(1), ...args], env, cwd, machine: 'Account setup' });
+    return start('setup:' + provider, { command: resolved.argv[0], args: [...resolved.argv.slice(1), ...args], env, cwd, provider, managed: resolved.argv.some(arg => arg.startsWith(path.join(process.env.GPT_MANAGER_DATA || app.getPath('userData'), 'providers', provider + '-'))), machine: 'Account setup' });
   });
   register('terminalAttach', token => { const s = sessions.get(token); if (!s) return; s.attached = true; for (const [channel, value] of s.buffer) emit(s, channel, value); s.buffer = []; });
   register('terminalInput', ({ token, data }) => { const s = sessions.get(token); if (!s || s.exited || typeof data !== 'string' || data.length > 100000) return; s.input(data); });
@@ -139,6 +139,6 @@ function installTerminals({ app, win, register, rpc, dialog, selectDirectory }) 
   });
   app.on('before-quit', () => { if (quitting || ![...sessions.values()].some(s => !s.exited)) for (const s of sessions.values()) s.kill(); });
   app.on('quit', () => { for (const s of sessions.values()) s.kill(); });
-  return { isRunning: id => [...sessions.values()].some(s => s.id === id && !s.exited) };
+  return { isRunning: id => [...sessions.values()].some(s => s.id === id && !s.exited), hasProviderRunning: provider => [...sessions.values()].some(s => !s.exited && s.provider === provider && s.managed) };
 }
 module.exports = { installTerminals, resumeCommand };

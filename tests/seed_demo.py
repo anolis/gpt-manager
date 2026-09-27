@@ -41,6 +41,8 @@ cli = bin_dir / 'codex'
 cli.write_text('''#!/usr/bin/env python3
 import os,sys,json,time
 from pathlib import Path
+if sys.argv[1:]==['login','status']:
+ print('Logged in using ChatGPT',file=sys.stderr); sys.exit(0)
 if len(sys.argv)>1 and sys.argv[1]=='app-server':
  for line in sys.stdin:
   value=json.loads(line)

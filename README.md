@@ -69,12 +69,12 @@ A native provider may need its index rebuilt or a matching project checkout befo
 
 ## Guided AI setup
 
-1. Open **AI setup** and choose **Install** under Codex, Claude Code, or Gemini CLI.
+1. Open **AI setup** and choose **Install managed copy** under Codex, Claude Code, or Gemini CLI.
 2. Follow the runtime download progress, dependency installation stage, and CLI verification. Cancel or retry if necessary.
 3. Choose **Sign in**. Complete the provider's prompts and browser flow in the embedded terminal. Gemini opens its interactive onboarding screen; exit it after signing in.
-4. Open **Catch up** and select Codex or Claude to generate a recap, or resume a conversation from the library. Installing a CLI does not create a provider account or subscription. Installed status does not claim authentication succeeded.
+4. Open **Catch up** and select Codex or Claude to generate a recap, or resume a conversation from the library. Installing a CLI does not create a provider account or subscription. Each card shows installation and sign-in status separately. Codex and Claude report their CLI login state; Gemini shows whether local credentials are configured, without claiming they are verified. Status refreshes after the sign-in terminal exits, or when you choose **Refresh installation & sign-in status**.
 
-The manager downloads Node v24.18.0 from nodejs.org and checks a pinned SHA-256. It installs the official stable npm packages into separate directories under its user-data `providers` folder, using npm's package integrity checks. No sudo, administrator rights, global npm changes, manual PATH changes, or separate Node install are needed. Failed upgrades preserve the prior managed version; older versions are retained for running terminals. Authentication stays in each provider's normal store. Antigravity IDE / third-party agy installation remains manual.
+The manager downloads Node v24.18.0 from nodejs.org and checks a pinned SHA-256. It installs the official stable npm packages into separate directories under its user-data `providers` folder, using npm's package integrity checks. No sudo, administrator rights, global npm changes, manual PATH changes, or separate Node install are needed. Failed upgrades preserve the prior managed version; older versions are retained for running terminals. Installed managed copies show **Uninstall managed copy**, with a separate **Update managed copy** action. Updates preserve your selected CLI source. Uninstall removes only GPT Manager’s provider packages and retains credentials, conversations, and existing external CLIs; close managed terminals and wait for active checks first. Authentication stays in each provider's normal store. Antigravity IDE / third-party agy installation remains manual.
 
 Package installation follows [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), [Claude Code setup](https://code.claude.com/docs/en/setup#install-with-npm), and [Gemini CLI installation](https://geminicli.com/docs/get-started/installation/). The Windows workflow validates real provider installation and `--version` without signing in or sending prompts.
 

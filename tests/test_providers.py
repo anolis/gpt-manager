@@ -94,3 +94,40 @@ class ProviderTests(unittest.TestCase):
     def test_managed_is_fallback_if_no_existing_cli(self):
         with patch.object(self.setup, 'existing_command', return_value=None), patch.object(self.setup, 'managed_command', return_value=['/managed/codex']):
             self.assertEqual(self.setup.command('codex'), ['/managed/codex'])
+
+    def test_uninstall_preserves_external_cli_credentials_and_other_providers(self):
+        managed = self.setup.root / ('codex-' + 'a'*32); self.package(managed)
+        old = self.setup.root / ('codex-' + 'b'*32); old.mkdir()
+        other = self.setup.root / ('claude-' + 'c'*32); other.mkdir()
+        (self.setup.root/'codex.json').write_text(json.dumps({'folder':managed.name,'version':'1.2.3'}))
+        credentials = Path(self.tmp.name)/'auth.json'; credentials.write_text('private fixture')
+        with patch.object(self.setup,'existing_command',return_value=['existing-cli']):
+            self.setup.prefer('codex','managed'); self.setup.uninstall('codex')
+            self.assertEqual(self.setup.command('codex'),['existing-cli'])
+        self.assertFalse(managed.exists()); self.assertFalse(old.exists()); self.assertTrue(other.exists())
+        self.assertEqual(credentials.read_text(),'private fixture')
+        self.assertFalse((self.setup.root/'codex.json').exists())
+    def test_uninstall_cannot_follow_manifest_outside_managed_root(self):
+        outside = Path(self.tmp.name)/'outside'; outside.mkdir(); (outside/'keep').write_text('keep')
+        (self.setup.root/'codex.json').write_text(json.dumps({'folder':'../outside'}))
+        self.setup.uninstall('codex'); self.assertTrue((outside/'keep').exists())
+    def test_uninstall_refuses_during_install_or_auth_check(self):
+        self.setup.job = {'status':'running'}
+        with self.assertRaises(ValueError): self.setup.uninstall('codex')
+        self.setup.job = None; self.setup.auth_busy = True
+        with self.assertRaises(ValueError): self.setup.uninstall('codex')
+    def test_auth_checks_report_state_without_identity_or_token_output(self):
+        script = Path(self.tmp.name)/'auth.py'
+        script.write_text("import sys,json\nif sys.argv[1]=='login': print('Logged in using ChatGPT',file=sys.stderr)\nelse: print(json.dumps({'loggedIn':True,'email':'PRIVATE','token':'SECRET'}))\n")
+        for provider in ('codex','claude'):
+            result = self.setup._auth_check(provider,[sys.executable,str(script)])
+            self.assertEqual(result['state'],'signed_in'); self.assertNotIn('PRIVATE',json.dumps(result)); self.assertNotIn('SECRET',json.dumps(result))
+        script.write_text("import sys,json\nif sys.argv[1]=='login': print('Not logged in',file=sys.stderr)\nelse: print(json.dumps({'loggedIn':False}))\nsys.exit(1)\n")
+        for provider in ('codex','claude'):
+            self.assertEqual(self.setup._auth_check(provider,[sys.executable,str(script)])['state'],'signed_out')
+    def test_gemini_saved_credentials_are_not_claimed_as_verified(self):
+        home = Path(self.tmp.name)/'gemini-home'; (home/'.gemini').mkdir(parents=True)
+        (home/'.gemini/oauth_creds.json').write_text(json.dumps({'refresh_token':'PRIVATE'}))
+        with patch.dict(os.environ, {'GEMINI_CLI_HOME':str(home),'GEMINI_API_KEY':'','GOOGLE_API_KEY':''}):
+            result = self.setup._auth_check('gemini',['unused'])
+        self.assertEqual(result['state'],'configured'); self.assertIn('not verified',result['label']); self.assertNotIn('PRIVATE',json.dumps(result))

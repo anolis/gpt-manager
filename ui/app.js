@@ -44,7 +44,7 @@ function render() {
   $('#usage-view').classList.toggle('hidden', state.view !== 'usage');
   if (state.view === 'usage') loadUsage(true);
   $('#setup-view').classList.toggle('hidden', state.view !== 'setup');
-  if (state.view === 'setup') loadSetup();
+  if (state.view === 'setup') loadSetup(true);
   if (state.view === 'catchup') renderCatchUp();
   $('#locations-view').classList.toggle('hidden', state.view !== 'locations'); $('#transfer-view').classList.toggle('hidden', state.view !== 'transfer');
   $('#nav-total').textContent = state.library.contexts.filter(c => !c.archived).length;
@@ -187,7 +187,7 @@ function showTerminal(id) {
   requestAnimationFrame(() => { const t = terminalSessions.get(id); t.fit.fit(); t.term.focus(); });
 }
 api.onTerminalData(({ token, data }) => { for (const t of terminalSessions.values()) if (t.token === token) t.term.write(Uint8Array.from(atob(data), c => c.charCodeAt(0))); });
-api.onTerminalExit(({ token, code }) => { for (const t of terminalSessions.values()) if (t.token === token) { t.exited = true; t.term.write(`\r\n\x1b[90m[Process exited: ${code}. Close this tab to resume again.]\x1b[0m\r\n`); } if (activeTerminal) showTerminal(activeTerminal); });
+api.onTerminalExit(({ token, code }) => { for (const [id, t] of terminalSessions) if (t.token === token) { t.exited = true; if (id.startsWith('setup:')) run(async () => { setupState = await api.setupAuthRefresh({ force: true }); if (state.view === 'setup') renderSetup(); }); t.term.write(`\r\n\x1b[90m[Process exited: ${code}. Close this tab to resume again.]\x1b[0m\r\n`); } if (activeTerminal) showTerminal(activeTerminal); });
 $('#terminal-hide').onclick = () => $('#terminal-dock').classList.add('hidden');
 $('#terminal-close').onclick = () => run(async () => { const t = terminalSessions.get(activeTerminal); if (!t) return; if (!await api.terminalClose(t.token)) return; t.term.dispose(); t.host.remove(); terminalSessions.delete(activeTerminal); activeTerminal = null; const next = terminalSessions.keys().next().value; if (next) showTerminal(next); else $('#terminal-dock').classList.add('hidden'); });
 $('#terminal-reopen').onclick = () => { if (activeTerminal) showTerminal(activeTerminal); else toast('Select a context and choose “Chat here” to start a terminal.'); };
@@ -504,26 +504,31 @@ setInterval(async () => {
 
 // Installation progress does not interrupt account sign-in terminals.
 let setupState = null, setupLoading = false;
-async function loadSetup() {
+async function loadSetup(checkAuth = false) {
   if (setupLoading) return;
   setupLoading = true;
-  try { setupState = await api.setupStatus(); if (setupState.job?.status === 'complete') catchupLoaded = false; renderSetup(); }
+  try { setupState = checkAuth ? await api.setupAuthRefresh({ force: checkAuth === 'force' }) : await api.setupStatus(); if (setupState.job?.status === 'complete') catchupLoaded = false; if (!setupState.authChecking && setupState.providers.some(p => p.available && !p.auth?.checkedAt)) setupState = await api.setupAuthRefresh({ force: true }); renderSetup(); }
   catch (error) { toast(error.message, true); }
   finally { setupLoading = false; }
 }
 function renderSetup() {
   const page = $('#setup-view'); page.replaceChildren();
-  page.append(element('p', 'transfer-note', '1. Install an assistant.  2. Sign in with your account.  3. Open Catch up or resume a conversation. Downloads are kept inside GPT Manager; no administrator access or manual Node setup is needed. Your provider’s subscription and usage limits still apply.'));
+  page.append(element('p', 'transfer-note', '1. Use an existing CLI or install a managed copy.  2. Check sign-in.  3. Open Catch up or resume a conversation. Downloads are kept inside GPT Manager; no administrator access or manual Node setup is needed. Your provider’s subscription and usage limits still apply.'));
   const running = setupState?.job?.status === 'running';
   const cards = element('div', 'transfer-grid');
   for (const provider of setupState?.providers || []) {
     const card = element('article', 'transfer-card');
-    card.append(element('h2', '', providers[provider.id]), element('p', 'muted', provider.available ? `${provider.managed ? 'Managed by GPT Manager' : 'Existing installation'}${provider.version ? ' · ' + provider.version : ''}. Sign-in is managed by the provider.` : 'Ready to install. GPT Manager downloads the official provider package and its dependencies.'));
-    const install = button(provider.available ? 'Install latest managed version' : 'Install', 'button primary', async () => { setupState = await api.setupInstall({ provider: provider.id }); renderSetup(); }); install.disabled = running;
-    const signIn = button('Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available;
+    card.append(element('h2', '', providers[provider.id]), element('p', 'muted', provider.available ? `Using ${provider.managed ? 'the managed copy' : 'your existing CLI'}.` : 'No usable CLI found. Install a managed copy to continue.'));
+    card.append(element('p', 'muted', `Existing CLI: ${provider.existingAvailable ? 'found' : 'not found'} · Managed copy: ${provider.managedInstalled ? (provider.managedAvailable ? 'installed' : 'needs repair') + (provider.managedVersion ? ' · ' + provider.managedVersion : '') : 'not installed'}`));
+    const auth = provider.auth || { state: 'unknown', label: 'Not checked yet' };
+    const authStatus = element('p', 'provider-auth ' + auth.state, provider.available ? auth.label : 'Install a CLI to check sign-in.'); authStatus.setAttribute('role', 'status'); card.append(authStatus);
+    if (auth.checkedAt) card.append(element('small', 'muted', 'Checked ' + new Date(auth.checkedAt * 1000).toLocaleTimeString()));
+    const install = button(provider.managedInstalled ? 'Uninstall managed copy' : 'Install managed copy', 'button ' + (provider.managedInstalled ? '' : 'primary'), async () => { setupState = provider.managedInstalled ? await api.setupUninstall({ provider: provider.id }) : await api.setupInstall({ provider: provider.id }); catchupLoaded = false; renderSetup(); if (provider.managedInstalled) await loadSetup('force'); }); install.disabled = running || (provider.managedInstalled && setupState.authChecking);
+    const signIn = button(auth.state === 'signed_in' || auth.state === 'configured' ? 'Sign in again' : 'Sign in', 'button', () => openTerminal('setup:' + provider.id)); signIn.disabled = !provider.available || running;
     card.append(install, signIn);
-    if (provider.existingAvailable && provider.managed) card.append(button('Use existing CLI', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'existing' }); catchupLoaded = false; renderSetup(); }));
-    if (provider.managedAvailable && !provider.managed) card.append(button('Use managed copy', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'managed' }); catchupLoaded = false; renderSetup(); }));
+    if (provider.managedInstalled) { const update = button('Update managed copy', 'quiet', async () => { setupState = await api.setupInstall({ provider: provider.id, activate: false }); renderSetup(); }); update.disabled = running; card.append(update); }
+    if (provider.existingAvailable && provider.managed) card.append(button('Use existing CLI', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'existing' }); catchupLoaded = false; await loadSetup('force'); }));
+    if (provider.managedAvailable && !provider.managed) card.append(button('Use managed copy', 'button', async () => { setupState = await api.setupPrefer({ provider: provider.id, source: 'managed' }); catchupLoaded = false; await loadSetup('force'); }));
     if (provider.executable) card.append(element('p', 'muted', 'Using: ' + provider.executable));
     cards.append(card);
   }
@@ -534,10 +539,10 @@ function renderSetup() {
     if (running) { const progress = element('progress', 'catchup-progress'); progress.max = 100; if (job.percent !== null) progress.value = job.percent; status.append(progress, button('Cancel installation', 'quiet', async () => { setupState = await api.setupCancel(); renderSetup(); })); }
     page.insertBefore(status, cards);
   }
-  page.append(button('Refresh installation status', 'button', loadSetup), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
-  page.append(element('p', 'muted', 'An existing CLI on PATH is preferred by default. Installing a managed copy explicitly switches to it; you can switch back anytime. Running terminals keep their current client. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
+  page.append(button('Refresh installation & sign-in status', 'button', () => loadSetup('force')), button('Go to Catch up', 'button', async () => { catchupLoaded = false; state.view = 'catchup'; render(); }));
+  page.append(element('p', 'muted', 'An existing CLI on PATH is preferred by default. Installing a managed copy explicitly switches to it; you can switch back anytime. Running terminals keep their current client. Uninstall removes only managed packages, keeping credentials and conversations. Sign-in checks report the CLI’s local status, not whether a provider will accept your next request. Antigravity IDE and third-party agy installations remain manual. Windows users: use native Windows installs and folders; WSL stores are separate.'));
 }
-setInterval(() => { if (setupState?.job?.status === 'running') loadSetup(); }, 1000);
+setInterval(() => { if (setupState?.job?.status === 'running' || setupState?.authChecking) loadSetup(); }, 1000);
 
 
 let recapScheduleLoaded = false, recapScheduleLoading = false, recapScheduleSummary = null;

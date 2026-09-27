@@ -73,6 +73,12 @@ app.whenReady().then(async () => {
   for (const name of ['scan', 'library', 'detail', 'annotate', 'files']) register(name, params => rpc(name, params));
   for (const name of ['status', 'install', 'cancel', 'prefer']) register('setup' + name[0].toUpperCase() + name.slice(1), params => rpc('setup_' + name, params));
   for (const name of ['status', 'refresh', 'configure']) register('usage' + name[0].toUpperCase() + name.slice(1), params => rpc('usage_' + name, params));
+  register('setupAuthRefresh', params => rpc('setup_auth_refresh', params));
+  register('setupUninstall', async params => {
+    if (terminalController.hasProviderRunning(params.provider)) throw new Error('Close this provider’s manager terminals before uninstalling its managed copy.');
+    if ((await rpc('catchup_status')).job?.status === 'running' || (await rpc('catchup_schedule_status')).lastStatus === 'running' || (await rpc('usage_status')).running) throw new Error('Wait for the current recap or usage check before uninstalling.');
+    return rpc('setup_uninstall', params);
+  });
   register('catchupScheduleStatus', () => rpc('catchup_schedule_status'));
   register('catchupScheduleConfigure', params => rpc('catchup_schedule_configure', params));
   for (const name of ['status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete']) register('catchup' + name[0].toUpperCase() + name.slice(1), params => rpc('catchup_' + name, params));
@@ -231,6 +237,12 @@ app.whenReady().then(async () => {
         document.querySelector('[data-view="setup"]').click();
         for (let i = 0; i < 40 && !setupState; i++) await delay(50);
         if (document.querySelectorAll('#setup-view .transfer-card').length !== 3) throw new Error('Provider setup cards missing');
+        for (let i = 0; i < 100 && setupState.providers[0].auth?.state !== 'signed_in'; i++) { await delay(100); await loadSetup(); }
+        if (setupState.providers[0].auth?.state !== 'signed_in') throw new Error('Provider sign-in status missing');
+        const originalSetup = setupState;
+        setupState = { ...setupState, providers: [{ ...setupState.providers[0], managedInstalled: true, managedAvailable: true, managedVersion: 'fixture' }] }; renderSetup();
+        if (!document.querySelector('#setup-view').textContent.includes('Uninstall managed copy') || !document.querySelector('#setup-view').textContent.includes('Update managed copy')) throw new Error('Managed installation actions missing');
+        setupState = originalSetup; renderSetup();
         document.querySelector('[data-view="usage"]').click();
         for (let i = 0; i < 100 && (!usageState || usageState.running); i++) { await delay(100); await loadUsage(); }
         if (document.querySelectorAll('#usage-view progress').length !== 2) throw new Error('Usage quota bars missing');

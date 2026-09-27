@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -54,6 +55,11 @@ class ProviderSetup:
         self.cancel_event = threading.Event()
         self.process = None
         self.thread = None
+        self.auth_results = {}
+        self.auth_busy = False
+        self.auth_processes = set()
+        self.closing = False
+        self.auth_last_check = 0
 
     def runtime(self):
         system = {'Windows': 'win', 'Linux': 'linux', 'Darwin': 'darwin'}.get(platform.system())
@@ -134,8 +140,86 @@ class ProviderSetup:
             except ValueError: command = None
             record = read_json(self.root / f'{provider}.json', {})
             existing = self.existing_command(provider); managed = self.managed_command(provider)
-            providers.append({'id': provider, 'available': bool(command), 'managed': bool(managed and command == managed), 'version': record.get('version', '') if command == managed else '', 'existingAvailable': bool(existing), 'managedAvailable': bool(managed), 'executable': command[-1] if command else ''})
-        with self.lock: return {'providers': providers, 'job': copy.deepcopy(self.job)}
+            providers.append({'id': provider, 'available': bool(command), 'managed': bool(managed and command == managed), 'version': record.get('version', '') if command == managed else '', 'existingAvailable': bool(existing), 'managedAvailable': bool(managed), 'managedInstalled': bool(record) or any(re.fullmatch(re.escape(provider) + r'-[a-f0-9]{32}', p.name) for p in self.root.iterdir()), 'executable': command[-1] if command else '', 'managedVersion': record.get('version', ''), 'auth': copy.deepcopy(self.auth_results.get(provider, {}).get('result', {'state':'unknown', 'label':'Not checked yet'})) if self.auth_results.get(provider, {}).get('command') == command else {'state':'unknown', 'label':'Not checked yet'}})
+        with self.lock: return {'providers': providers, 'job': copy.deepcopy(self.job), 'authChecking': self.auth_busy}
+
+    def uninstall(self, provider):
+        if provider not in PACKAGES: raise ValueError('Unknown provider')
+        with self.lock:
+            if self.job and self.job['status'] == 'running': raise ValueError('Wait for installation to finish or cancel it first.')
+            if self.auth_busy: raise ValueError('Wait for the sign-in check to finish before uninstalling.')
+            # Only our UUID-named package directories are eligible; never run npm uninstall globally.
+            folders = [p for p in self.root.iterdir() if re.fullmatch(re.escape(provider) + r'-[a-f0-9]{32}', p.name)]
+            try:
+                for folder in folders:
+                    if folder.is_symlink(): folder.unlink()
+                    elif folder.is_dir(): shutil.rmtree(folder)
+                (self.root / f'{provider}.json').unlink(missing_ok=True)
+                preferences = read_json(self.root / 'preferences.json', {})
+                preferences.pop(provider, None); atomic_json(self.root / 'preferences.json', preferences)
+                self.auth_results.pop(provider, None)
+            except OSError:
+                raise ValueError('The managed copy could not be fully removed. Close this provider in other apps and retry. Credentials and conversations were retained.') from None
+        return self.status()
+
+    def auth_refresh(self, force=False):
+        with self.lock:
+            if self.closing or self.auth_busy or (not force and time.monotonic() - self.auth_last_check < 60): return self.status()
+            self.auth_busy = True; self.auth_last_check = time.monotonic()
+        def check():
+            try:
+                for provider in PACKAGES:
+                    if self.closing: break
+                    try: command = self.command(provider)
+                    except ValueError: continue
+                    with self.lock: self.auth_results[provider] = {'command':command, 'result':{'state':'checking','label':'Checking sign-in…'}}
+                    try: result = self._auth_check(provider, command)
+                    except Exception: result = {'state':'unknown','label':'Could not check sign-in. Open the provider to verify.'}
+                    result['checkedAt'] = time.time()
+                    with self.lock: self.auth_results[provider] = {'command':command, 'result':result}
+            finally:
+                with self.lock: self.auth_busy = False
+        threading.Thread(target=check, daemon=True).start()
+        return self.status()
+
+    def _auth_check(self, provider, command):
+        if provider == 'gemini':
+            if os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY'):
+                return {'state':'configured','label':'API key configured (not verified)'}
+            home = Path(os.environ.get('GEMINI_CLI_HOME', str(Path.home()))) / '.gemini'
+            credentials = home / 'oauth_creds.json'
+            if credentials.is_file() and credentials.stat().st_size < 1024 * 1024:
+                data = read_json(credentials, {})
+                if data.get('refresh_token') or data.get('access_token'):
+                    return {'state':'configured','label':'Saved Google sign-in detected (not verified)'}
+            return {'state':'unknown','label':'Check sign-in inside Gemini; no CLI status command is available.'}
+        args = ['login', 'status'] if provider == 'codex' else ['auth', 'status', '--json']
+        with tempfile.TemporaryDirectory(prefix='gpt-auth-check-') as directory, tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            env = self.environment(); env.pop('CLAUDECODE', None)
+            with self.lock:
+                if self.closing: raise ValueError('Closing')
+                proc = subprocess.Popen([*command, *args], cwd=directory, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=os.name != 'nt', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                self.auth_processes.add(proc)
+            deadline = time.monotonic() + 12
+            try:
+                while proc.poll() is None:
+                    if self.closing or time.monotonic() >= deadline: raise ValueError('Status check timed out')
+                    if max(os.fstat(out.fileno()).st_size, os.fstat(err.fileno()).st_size) > 65536: raise ValueError('Unexpected status output')
+                    time.sleep(.1)
+                out.seek(0); err.seek(0)
+                if provider == 'claude':
+                    value = json.loads(out.read(65536))
+                    signed_in = value.get('loggedIn')
+                    if not isinstance(signed_in, bool): raise ValueError('Unrecognized status format')
+                else:
+                    text = (out.read(65536) + err.read(65536)).decode('utf-8', errors='replace').lower()
+                    if 'not logged in' in text: signed_in = False
+                    elif proc.returncode == 0 and 'logged in' in text: signed_in = True
+                    else: raise ValueError('Unrecognized status format')
+                return {'state':'signed_in' if signed_in else 'signed_out', 'label':'Signed in (CLI reports)' if signed_in else 'Not signed in'}
+            finally:
+                stop_process(proc)
+                with self.lock: self.auth_processes.discard(proc)
 
     def _check(self):
         if self.cancel_event.is_set(): raise InterruptedError('Installation canceled. You can retry when ready.')
@@ -143,13 +227,14 @@ class ProviderSetup:
     def _progress(self, message, percent=None):
         with self.lock: self.job.update(message=message, percent=percent)
 
-    def install(self, provider):
+    def install(self, provider, activate=True):
+        if not isinstance(activate, bool): raise ValueError('Invalid installation preference')
         if provider not in PACKAGES: raise ValueError('Choose Codex, Claude or Gemini CLI.')
         with self.lock:
             if self.job and self.job['status'] == 'running': raise ValueError('Wait for the current installation or cancel it.')
             self.cancel_event.clear()
             self.job = {'provider': provider, 'status': 'running', 'message': 'Preparing installation…', 'percent': None}
-            self.thread = threading.Thread(target=self._install, args=(provider,), daemon=True)
+            self.thread = threading.Thread(target=self._install, args=(provider, activate), daemon=True)
             self.thread.start()
         return self.status()
 
@@ -209,7 +294,7 @@ class ProviderSetup:
                 stop_process(process)
                 with self.lock: self.process = None
 
-    def _install(self, provider):
+    def _install(self, provider, activate=True):
         stage = None
         try:
             self._download_runtime(); self._check()
@@ -226,8 +311,9 @@ class ProviderSetup:
                 self._check()
                 atomic_json(self.root / f'{provider}.json', {'folder': stage.name, 'version': metadata.get('version', '')})
                 preferences = read_json(self.root / 'preferences.json', {})
-                preferences[provider] = 'managed'
-                atomic_json(self.root / 'preferences.json', preferences)
+                if activate:
+                    preferences[provider] = 'managed'
+                    atomic_json(self.root / 'preferences.json', preferences)
                 stage = None  # Keep older versions too: a running terminal may still use one.
                 self.job.update(status='complete', message='Installed. Choose Sign in to connect your account.', percent=100)
         except InterruptedError as error:
@@ -242,6 +328,9 @@ class ProviderSetup:
         return self.status()
 
     def close(self):
+        self.closing = True
+        with self.lock: auth_processes = list(self.auth_processes)
+        for process in auth_processes: stop_process(process)
         self.cancel_event.set()
         with self.lock: process = self.process
         stop_process(process)

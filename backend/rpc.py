@@ -36,7 +36,7 @@ schedule = RecapSchedule(catchup)
 schedule.start()
 signal.signal(signal.SIGTERM, lambda *_: (usage.close(), schedule.close(), setup.close(), catchup.close(), cloud.close(), sys.exit(0)))
 cloud_methods = {f'cloud_{name}': getattr(cloud, name) for name in ('status', 'connect', 'answer', 'cancel', 'folder', 'configure', 'configure_google', 'disconnect', 'sync', 'tick')}
-setup_methods = {'setup_status': setup.status, 'setup_install': setup.install, 'setup_cancel': setup.cancel, 'setup_prefer': setup.prefer, 'usage_status': usage.status, 'usage_refresh': usage.refresh, 'usage_configure': usage.configure, 'provider_command': lambda provider: {'argv': setup.command(provider), 'env': setup.environment()}}
+setup_methods = {'setup_status': setup.status, 'setup_install': setup.install, 'setup_cancel': setup.cancel, 'setup_prefer': setup.prefer, 'setup_auth_refresh': setup.auth_refresh, 'setup_uninstall': setup.uninstall, 'usage_status': usage.status, 'usage_refresh': usage.refresh, 'usage_configure': usage.configure, 'provider_command': lambda provider: {'argv': setup.command(provider), 'env': setup.environment()}}
 catchup_methods = {f'catchup_{name}': getattr(catchup, name) for name in ('status', 'prepare', 'generate', 'cancel', 'history', 'get', 'delete')}
 catchup_methods.update({'catchup_schedule_status': schedule.status, 'catchup_schedule_configure': schedule.configure})
 methods = {name: getattr(manager, name) for name in ('scan', 'library', 'detail', 'annotate', 'add_root', 'files', 'export', 'preview', 'import_archive', 'restore')}

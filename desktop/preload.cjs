@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const call = name => (...args) => ipcRenderer.invoke(name, ...args);
 contextBridge.exposeInMainWorld('manager', {
   usageStatus: call('usageStatus'), usageRefresh: call('usageRefresh'), usageConfigure: call('usageConfigure'),
+  setupUninstall: call('setupUninstall'), setupAuthRefresh: call('setupAuthRefresh'),
   setupPrefer: call('setupPrefer'),
   setupStatus: call('setupStatus'), setupInstall: call('setupInstall'), setupCancel: call('setupCancel'), providerSignIn: call('providerSignIn'),
   catchupScheduleStatus: call('catchupScheduleStatus'), catchupScheduleConfigure: call('catchupScheduleConfigure'),

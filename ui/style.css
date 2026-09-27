@@ -41,3 +41,10 @@
 .usage-card small { overflow-wrap: anywhere; }
 
 .brand img.brand-icon { width: 42px; height: 42px; padding: 0; background: transparent; flex-shrink: 0; }
+
+.provider-auth.signed_in { color: var(--accent); }
+.provider-auth.signed_out { color: #efa590; }
+.provider-auth.checking, .provider-auth.configured { color: #e5d19a; }
+#setup-view .transfer-card small { display: block; margin-bottom: 12px; }
+#setup-view .transfer-card p { min-height: 0; overflow-wrap: anywhere; }
+#setup-view .transfer-card h2 { margin-top: 0; }
