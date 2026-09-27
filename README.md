@@ -8,6 +8,27 @@ A local desktop library for Codex, Claude Code, Gemini CLI, and Antigravity / ag
 
 ## Run
 
+**Linux:** download and run the installer as your normal desktop user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/anolis/gpt-manager/main/install-linux.sh -o /tmp/gpt-manager-install.sh
+bash /tmp/gpt-manager-install.sh
+```
+
+Then open **GPT Manager** from your application menu. The installer handles system dependencies, downloads a checksum-verified Node runtime, installs the locked app dependencies, and registers the app icon. You do not need to configure Node or `nvm`. It requests sudo for system packages and, where required, an app-specific AppArmor rule that keeps Electron’s sandbox enabled.
+
+Supports x86_64 and ARM64 on glibc Linux, with automatic packages for Debian/Ubuntu, Fedora, Arch, and openSUSE families. A graphical desktop and a distribution providing Python 3.10+ are required. The installer does not change global Node installations or install/sign into AI providers; use **AI setup** inside the app for those.
+
+Run the same commands again to **update**. The app switches to the new version only after dependency and runtime checks succeed; earlier versions remain available to already-running sessions. Restart GPT Manager after updating.
+
+To **uninstall**:
+
+```sh
+~/.local/bin/gpt-manager-uninstall
+```
+
+Close GPT Manager first. This removes installed app versions, launchers, icons and its AppArmor profile, while retaining conversations, credentials, application settings and system packages. App files live in `${XDG_DATA_HOME:-~/.local/share}/gpt-manager-app`; the command lives in `~/.local/bin/gpt-manager`. Run `bash install-linux.sh --help` for `--ref`, `--source`, and `--skip-system-deps` options. To install your current local checkout, use `bash install-linux.sh --source .`.
+
 Windows 11 x64 builds bundle the backend and Python. Download the installer from [Releases](https://github.com/anolis/gpt-manager/releases), run it for your user account, then open **AI setup**. Early builds are unsigned and may display an unknown-publisher warning. Native Windows folders and CLIs are supported; WSL is a separate environment.
 
 To run from source, use the commands below. Requires **Node.js 22.12+** (24 recommended), **Python 3.10+**, and a graphical desktop. Linux is the first supported platform.

@@ -4,6 +4,7 @@ const readline = require('node:readline');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
+if (process.platform === 'linux') app.setDesktopName('io.github.anolis.gpt-manager.desktop');
 
 let win, worker, seq = 0, chosenImport = null;
 const pending = new Map();
