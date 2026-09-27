@@ -181,6 +181,8 @@ Select a conversation and open **Details & notes → Move to another folder**.
 
 Close the conversation in external provider apps before moving files. Running embedded terminals block both actions; SQLite databases with WAL files cannot be moved until closed/checkpointed (Export remains available for snapshots). Moves do not transfer authentication, shared provider indexes, or project source files, and do not automatically enable native resume from a new store. Imported contexts use **Restore files** instead of moving the manager’s internal library copies.
 
+The app and website share the original vector icon in `ui/assets/icon.svg`. PNG, Windows ICO and website exports are checked in; regenerate them with `python tools/build-icons.py` (ImageMagick + Pillow).
+
 ## Implementation
 
 - Electron desktop shell with a sandboxed, local-only renderer.

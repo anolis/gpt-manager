@@ -115,3 +115,6 @@ footer > div a { text-decoration: none; }
   h2 { letter-spacing: -1.4px; }.honest-note a { white-space: normal; }.caption { font-size: 8px; }.code-window pre { padding-inline: 15px; }
 }
 @media (prefers-reduced-motion: reduce) { :root { scroll-behavior: auto; }.button { transition: none; } }
+
+img.mark, img.mark.small { background: transparent; padding: 0; width: 42px; height: 42px; flex-shrink: 0; }
+img.mark.small { width: 29px; height: 29px; }

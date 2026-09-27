@@ -39,3 +39,5 @@
 .usage-meter-toggle { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
 #usage-view > .button { margin-right: 8px; }
 .usage-card small { overflow-wrap: anywhere; }
+
+.brand img.brand-icon { width: 42px; height: 42px; padding: 0; background: transparent; flex-shrink: 0; }

@@ -30,6 +30,8 @@ async function selectDirectory(title) {
   return result.canceled ? null : result.filePaths[0];
 }
 app.whenReady().then(async () => {
+  app.setAppUserModelId('io.github.anolis.gpt-manager');
+  if (process.platform === 'darwin') app.dock.setIcon(path.join(__dirname, '../ui/assets/icon.png'));
   if (process.argv.includes('--platform-smoke-test')) setTimeout(() => { console.error('Platform smoke exceeded one minute'); app.exit(1); }, 60000).unref();
   if (process.argv.includes('--smoke-test')) {
     const fixture = process.env.GPT_MANAGER_HOME;
@@ -62,7 +64,7 @@ app.whenReady().then(async () => {
     } catch (e) { console.error('Invalid backend response', e.message); }
   });
   win = new BrowserWindow({ width: 1460, height: 960, minWidth: 1000, minHeight: 680,
-    title: 'GPT Manager', backgroundColor: '#101311', autoHideMenuBar: true,
+    title: 'GPT Manager', icon: path.join(__dirname, '../ui/assets/icon.png'), backgroundColor: '#101311', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
   win.webContents.on('console-message', (_event, level, message) => { if (level >= 2) console.error('RENDERER: ' + message); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -238,11 +240,11 @@ app.whenReady().then(async () => {
         if (!document.querySelector('#recap-schedule-status') || !document.querySelector('#catchup-view').textContent.includes('One recap, all your services.')) throw new Error('Daily recap controls or aside missing');
         document.querySelector('#catchup-period').value = 'seven';
         document.querySelector('#catchup-review').click();
-        for (let i = 0; i < 120 && !document.querySelector('#catchup-generate'); i++) await delay(100);
+        for (let i = 0; i < 120 && (!document.querySelector('#catchup-generate') || document.querySelector('#catchup-generate').disabled); i++) await delay(100);
         if (!document.querySelector('#catchup-generate') || catchupState.preview.sources.length !== 4) throw new Error('Catch-up activity preview failed');
         document.querySelector('#catchup-generate').click();
         for (let i = 0; i < 120 && !catchupRecord; i++) await delay(100);
-        if (!document.querySelector('.catchup-project') || !catchupRecord) throw new Error('Catch-up recap generation failed');
+        if (!document.querySelector('.catchup-project') || !catchupRecord) throw new Error('Catch-up recap generation failed: ' + JSON.stringify(catchupState.job));
         document.querySelector('[data-view="cloud"]').click();
         if (document.querySelectorAll('.cloud-card').length !== 3) throw new Error('Cloud provider cards missing');
         document.querySelector('.maintainer-setup summary').click();
