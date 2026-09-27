@@ -22,7 +22,7 @@ jobs:
       - run: npm ci
       - run: python -m pip install pyinstaller==6.19.0
       - run: npm run check
-      - run: python -m unittest tests.test_providers tests.test_windows -v
+      - run: python -m unittest tests.test_providers tests.test_windows tests.test_cloud.ConnectorEndpointTests -v
       - run: python tools/verify-installers.py
       - run: npm run build:backend
       - run: npx electron-builder --win --x64 --publish never

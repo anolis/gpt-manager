@@ -1,6 +1,6 @@
 {
   "name": "gpt-manager",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "A local desktop library for AI contexts",
   "main": "desktop/main.cjs",

@@ -213,4 +213,55 @@ class CloudTests(unittest.TestCase):
                 connector.binary()
 
 
+
+
+class ConnectorEndpointTests(unittest.TestCase):
+    def test_oauth_callback_does_not_replace_authenticated_control_endpoint(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from unittest.mock import Mock
+        requests = []
+        class Control(BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append((self.path, self.headers.get('Authorization')))
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b'{}')
+            def log_message(self, *args): pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Control)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                connector = Connector(temp)
+                process = Mock(); process.poll.return_value = None; connector.process = process
+                endpoint = 'http://127.0.0.1:' + str(server.server_port)
+                connector._service_announcement(process, connector.ready, 'NOTICE: Serving remote control on ' + endpoint + '/')
+                for line in (
+                    'NOTICE: Make sure your Redirect URL is set to "http://127.0.0.1:53682/" in your custom config.',
+                    'NOTICE: If your browser doesn\'t open automatically go to the following link: http://127.0.0.1:53682/auth?state=fixture-private-state',
+                    'NOTICE: Waiting for code...', 'NOTICE: Got code',
+                    'NOTICE: Serving remote control on http://127.0.0.1:1/'):
+                    connector._service_announcement(process, connector.ready, line)
+                self.assertEqual(connector.url, endpoint)
+                self.assertTrue(connector.ready.is_set())
+                self.assertEqual(connector.call('operations/mkdir', {'fs':'fixture:', 'remote':'GPT Manager/v1'}), {})
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(requests[0][0], '/operations/mkdir')
+                self.assertTrue(requests[0][1].startswith('Basic '))
+                self.assertNotIn('fixture-private-state', json.dumps(requests))
+        finally:
+            server.shutdown(); server.server_close(); thread.join(2)
+
+    def test_only_current_process_service_announcement_can_signal_readiness(self):
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            connector = Connector(temp); old, current = object(), object(); connector.process = current
+            old_ready, ready = threading.Event(), threading.Event()
+            connector._service_announcement(old, old_ready, 'Serving remote control on http://127.0.0.1:1234/')
+            for line in ('redirect http://127.0.0.1:53682/', 'Serving remote control on http://evil.test:1234/', 'Serving remote control on http://127.0.0.1:99999/', 'Serving remote control on http://127.0.0.1:1234.evil.test/'):
+                connector._service_announcement(current, ready, line)
+            self.assertIsNone(connector.url); self.assertFalse(ready.is_set()); self.assertFalse(old_ready.is_set())
+            connector._service_announcement(current, ready, 'NOTICE: Serving remote control on http://127.0.0.1:1234/')
+            self.assertTrue(ready.is_set()); self.assertEqual(connector.url, 'http://127.0.0.1:1234')
+
+
 if __name__ == '__main__': unittest.main()

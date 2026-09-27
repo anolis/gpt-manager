@@ -111,28 +111,37 @@ class Connector:
                 return
             executable = self.binary()
             self.progress('Starting cloud connector…')
-            self.ready.clear()
+            self.ready = threading.Event()
+            ready = self.ready
             self.url = None
             self.config.touch(mode=0o600, exist_ok=True)
             self.config.chmod(0o600)
             # Ignore ambient rclone settings, which could redirect remotes or turn on secret logging.
             env = {k: v for k, v in os.environ.items() if not k.startswith('RCLONE_')}
             env['RCLONE_RC_PASS'] = self.password
-            self.process = subprocess.Popen([str(executable), 'rcd', '--rc-addr', '127.0.0.1:0', '--rc-user', 'gpt-manager', '--config', str(self.config), '--log-level', 'NOTICE', '--contimeout', '20s', '--timeout', '5m', '--retries', '2'], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            self.process = subprocess.Popen([str(executable), 'rcd', '--rc-addr', '127.0.0.1:0', '--rc-user', 'gpt-manager', '--config', str(self.config), '--log-level', 'NOTICE', '--contimeout', '20s', '--timeout', '5m', '--retries', '2'], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             proc = self.process
             def drain():
                 for line in proc.stderr:
-                    match = re.search(r'http://127\.0\.0\.1:[0-9]+', line)
-                    if match:
-                        self.url = match.group(0)
-                        self.ready.set()
+                    self._service_announcement(proc, ready, line)
                     # Never forward provider output or credentials to logs/the renderer.
-                self.ready.set()
+                ready.set()
             threading.Thread(target=drain, daemon=True).start()
-            if not self.ready.wait(15) or not self.url:
+            if not ready.wait(15) or not self.url:
                 self.close()
                 raise ValueError('The cloud connector could not start its private localhost service')
             self.progress('Preparing account sign-in…')
+
+    def _service_announcement(self, process, ready, line):
+        # OAuth also logs localhost URLs (redirect URI and browser sign-in link).
+        # Only the RC server announcement defines our authenticated API endpoint.
+        # Pin it for this process, and ignore late output from a retired process.
+        if process is not self.process or self.url is not None:
+            return
+        match = re.search(r'\bServing remote control on (http://127\.0\.0\.1:([0-9]+))(?=/|\s|$)', line)
+        if match and 0 < int(match.group(2)) <= 65535:
+            self.url = match.group(1)
+            ready.set()
 
     def call(self, method, params):
         if method not in ('config/create', 'config/update', 'config/delete', 'operations/list', 'operations/mkdir', 'operations/copyfile', 'operations/movefile'):
