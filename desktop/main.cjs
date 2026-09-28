@@ -92,9 +92,9 @@ app.whenReady().then(async () => {
     const context = (await rpc('library')).contexts.find(c => c.id === id);
     if (!context || context.origin !== 'remote') throw new Error('Select an SSH context.');
     if (terminalController.isRunning(id)) throw new Error('Stop this remote terminal before handing the context off.');
-    const mode = await dialog.showMessageBox(win, { type: 'question', message: 'Where should this conversation work locally?', detail: `Source: ${context.machine}\nProject: ${context.project || 'Not recorded'}\n\nUse an existing local folder (source workspace changes will not be copied), or copy the remote work folder including .git, hidden files, dependencies and uncommitted changes. Stop external provider sessions and edits on the source first. GPT Manager will reserve the source and retain its context files as a backup. If this is a return to a previously handed-off copy, the original handoff is verified and that older copy is backed up before restoring the latest history.`, buttons: ['Cancel', 'Use existing folder', 'Copy remote work folder'], defaultId: 1, cancelId: 0 });
+    const mode = await dialog.showMessageBox(win, { type: 'question', message: 'Where should this conversation work locally?', detail: `Source: ${context.machine}\nProject: ${context.project || 'Not recorded'}\n\nUse an existing local folder (source workspace changes will not be copied), or copy the remote work folder including .git, hidden files, dependencies and uncommitted changes. Place folder with files creates a new project folder inside your selected parent directory (for example ~/repos/project-name). Place files in folder copies the contents directly into an empty folder you select. Existing files are never replaced. Stop external provider sessions and edits on the source first. GPT Manager will reserve the source and retain its context files as a backup. If this is a return to a previously handed-off copy, the original handoff is verified and that older copy is backed up before restoring the latest history.`, buttons: ['Cancel', 'Use existing folder', 'Place folder with files', 'Place files in folder'], defaultId: 1, cancelId: 0 });
     if (!mode.response) return null;
-    const folder = await selectDirectory(mode.response === 2 ? 'Choose an empty folder for the remote work folder' : 'Choose the existing local project folder');
+    const folder = await selectDirectory(mode.response === 2 ? 'Choose the parent folder for the copied project' : mode.response === 3 ? 'Choose an empty folder for the project files' : 'Choose the existing local project folder');
     if (!folder) return null;
     if (mode.response === 1) {
       let git;
@@ -111,7 +111,7 @@ app.whenReady().then(async () => {
         if (answer.response === 2) await rpc('git_check', { folder, pull: true });
       }
     }
-    const params = { id, folder, copy_workspace: mode.response === 2 };
+    const params = { id, folder, copy_workspace: mode.response >= 2, workspace_layout: mode.response === 3 ? 'contents' : 'folder' };
     const result = await rpc('teleport', params);
     if (result.conflict !== 'retained-changed') return result;
     const answer = await dialog.showMessageBox(win, { type: 'warning', message: 'The local conversation changed after the handoff', detail: `Use the conversation from ${result.sourceMachine} instead?\n\nThis replaces the local conversation, including any messages added here after the handoff. GPT Manager will save a recovery backup first. Your project files are not discarded. Stop any local provider session using this conversation before continuing.\n\nLocal conversation: ${result.localPath}`, buttons: ['Cancel', 'Trash local changes and continue'], defaultId: 0, cancelId: 0 });
@@ -283,10 +283,14 @@ app.whenReady().then(async () => {
         const codex = state.library.contexts.find(c => c.provider === 'codex');
         await selectContext(codex.id);
         const inspector = document.querySelector('#inspector');
+        let messagesPane = inspector.querySelector('.inspect-body');
+        const actionsTop = inspector.querySelector('.inspect-actions').getBoundingClientRect().top;
+        if (messagesPane.clientHeight < 80) throw new Error('Message scroll area has no usable height');
         if (!state.messages.at(-1).content.includes('History message 449')) throw new Error('Conversation did not load latest history');
-        if (Math.abs(inspector.scrollHeight - inspector.clientHeight - inspector.scrollTop) > 2) throw new Error('Conversation did not open at bottom');
+        if (Math.abs(messagesPane.scrollHeight - messagesPane.clientHeight - messagesPane.scrollTop) > 2) throw new Error('Conversation did not open at bottom');
         const oldestVisible = inspector.querySelector('.message');
-        inspector.scrollTop = 0;
+        messagesPane.scrollTop = 0;
+        if (inspector.scrollTop !== 0 || Math.abs(inspector.querySelector('.inspect-actions').getBoundingClientRect().top - actionsTop) > 1) throw new Error('Conversation actions scrolled with messages');
         const anchorText = oldestVisible.querySelector('pre').textContent;
         const anchorTop = oldestVisible.getBoundingClientRect().top;
         inspector.querySelector('.pagination button').click();
@@ -295,6 +299,13 @@ app.whenReady().then(async () => {
         const anchor = [...inspector.querySelectorAll('.message')].find(item => item.querySelector('pre').textContent === anchorText);
         if (!anchor || Math.abs(anchor.getBoundingClientRect().top - anchorTop) > 2) throw new Error('Loading older history moved the reading position');
         if (!state.messages.at(-1).content.includes('History message 449')) throw new Error('Older page replaced latest history');
+        messagesPane = inspector.querySelector('.inspect-body');
+        messagesPane.scrollTop = messagesPane.scrollHeight;
+        if (Math.abs(inspector.querySelector('.inspect-actions').getBoundingClientRect().top - actionsTop) > 1) throw new Error('Actions moved after older history loaded');
+        inspector.querySelectorAll('.tab')[1].click();
+        inspector.querySelectorAll('.tab')[0].click();
+        messagesPane = inspector.querySelector('.inspect-body');
+        if (Math.abs(messagesPane.scrollHeight - messagesPane.clientHeight - messagesPane.scrollTop) > 2) throw new Error('Returning to conversation did not scroll to latest');
         await openTerminal(codex.id);
         const session = terminalSessions.get(codex.id);
         if (!session) throw new Error('Terminal failed to start');

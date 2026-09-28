@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     from .manager import atomic_json, read_json, digest
@@ -63,7 +63,7 @@ class Teleport:
         self.remote = remote
         self.manager = remote.manager
 
-    def run(self, id, folder, copy_workspace=False, discard_local_changes=False, expected_local=None):
+    def run(self, id, folder, copy_workspace=False, discard_local_changes=False, expected_local=None, workspace_layout='folder'):
         c = self.remote.context(id)
         if c['origin'] != 'remote':
             raise ValueError('Resume here is for contexts on SSH endpoints.')
@@ -73,9 +73,9 @@ class Teleport:
         marker = lock_paths(c['provider'], c['sessionId'], create=False)[1]
         previous = read_json(marker, {})
         with context_lock(c['provider'], c['sessionId'], previous.get('token')):
-            return self._run(id, folder, copy_workspace, marker, read_json(marker, {}), discard_local_changes, expected_local)
+            return self._run(id, folder, copy_workspace, marker, read_json(marker, {}), discard_local_changes, expected_local, workspace_layout)
 
-    def _run(self, id, folder, copy_workspace=False, marker=None, previous=None, discard_local_changes=False, expected_local=None):
+    def _run(self, id, folder, copy_workspace=False, marker=None, previous=None, discard_local_changes=False, expected_local=None, workspace_layout='folder'):
         c = self.remote.context(id)
         if c['origin'] != 'remote':
             raise ValueError('Resume here is for contexts on SSH endpoints.')
@@ -83,8 +83,19 @@ class Teleport:
         destination = Path(folder).resolve()
         if not destination.is_dir():
             raise ValueError('Choose an existing local project directory.')
-        if copy_workspace and any(destination.iterdir()):
-            raise ValueError('Choose an empty folder for the remote work folder.')
+        if copy_workspace:
+            if workspace_layout not in ('folder', 'contents'):
+                raise ValueError('Choose whether to copy the project folder or its contents.')
+            project = PurePosixPath(c.get('project') or '')
+            name = project.name
+            if not project.is_absolute() or not name or name in ('.', '..') or any(char in name for char in '\\/:\x00'):
+                raise ValueError('The remote context needs a named project folder before copying its workspace.')
+            if workspace_layout == 'folder':
+                destination = destination / name
+                if destination.exists() or destination.is_symlink():
+                    raise ValueError(f'A folder or file already exists at {destination}. Choose another parent folder, or use the existing-folder option to resume there without copying files.')
+            elif any(destination.iterdir()):
+                raise ValueError('Place files in folder requires an empty destination. Existing files are never replaced.')
         if c['machineId'] == self.remote.machine['id']:
             raise ValueError('This endpoint is the current machine. Resume its local context instead.')
         self.manager.scan()
@@ -118,12 +129,14 @@ class Teleport:
         receipt_dir = self.manager.data / 'handoffs'
         receipt_dir.mkdir(exist_ok=True)
         receipt_path = receipt_dir / (token + '.json')
-        receipt = {'endpoint': endpoint, 'context': request, 'destination': str(destination), 'state': 'preparing'}
+        receipt = {'endpoint': endpoint, 'context': request, 'destination': str(destination), 'state': 'preparing',
+                   'workspaceLayout': workspace_layout if copy_workspace else None}
         atomic_json(receipt_path, receipt)
         receipt_path.chmod(0o600)
         restored = False
         removed = []
         backup = None
+        workspace_created = False
         self.remote.progress('Reserving the source conversation…')
         try:
             self.remote.request(endpoint, {**request, 'operation': 'reserve', 'target': self.remote.machine['name'],
@@ -137,17 +150,33 @@ class Teleport:
                 if len(preview['contexts']) != 1 or preview['contexts'][0]['sessionId'] != c['sessionId'] or preview['contexts'][0]['provider'] != c['provider']:
                     raise ValueError('Remote archive does not match the selected context.')
                 if copy_workspace:
+                    if preview['contexts'][0].get('project') != c.get('project'):
+                        raise ValueError('The remote project folder changed. Refresh the endpoint before copying files.')
                     self.remote.progress('Copying the remote work folder, including hidden files…')
                     workspace = Path(temp) / 'workspace.zip'
                     self.remote.download(endpoint, {**request, 'operation': 'workspace'}, workspace)
-                    # Stage beside destination so installation is a single filesystem rename.
+                    # Validate in a sibling staging directory, then exclusively
+                    # create the named destination. Never replace an existing
+                    # folder, including an empty one created during the download.
                     with tempfile.TemporaryDirectory(dir=destination.parent, prefix='.gpt-handoff-') as stage:
                         staged = Path(stage) / 'project'
                         staged.mkdir()
                         extract_workspace(workspace, staged)
-                        if any(destination.iterdir()):
-                            raise ValueError('Destination is no longer empty. No workspace files were replaced.')
-                        staged.replace(destination)
+                        if workspace_layout == 'folder':
+                            try:
+                                destination.mkdir(mode=0o700)
+                            except FileExistsError:
+                                raise ValueError(f'The destination appeared during the transfer: {destination}. No existing files were replaced.') from None
+                            workspace_created = True
+                            receipt['workspaceCreated'] = True
+                            atomic_json(receipt_path, receipt)
+                            for child in staged.iterdir():
+                                child.rename(destination / child.name)
+                        else:
+                            if any(destination.iterdir()):
+                                raise ValueError('Destination is no longer empty. No workspace files were replaced.')
+                            staged.replace(destination)
+                            workspace_created = True
                 self.remote.progress('Restoring the context into the local provider store…')
                 before = set(self.manager.contexts)
                 self.manager.import_archive(str(archive))
@@ -240,4 +269,6 @@ class Teleport:
             atomic_json(receipt_path, receipt)
             if restored:
                 raise ValueError(f'Local context files were restored, but setup needs attention: {error}. The source remains reserved. Refresh the local library before retrying; no files were overwritten.') from None
+            if workspace_created:
+                raise ValueError(f'{error} Copied workspace files were retained at {destination}. Inspect that folder before retrying; use the existing-folder option if the copy is complete.') from None
             raise

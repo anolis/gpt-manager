@@ -86,11 +86,11 @@ function renderRows() {
     content.append(title, meta, bottom); row.append(check, content); rows.append(row);
   }
 }
-async function selectContext(id) { state.active = id; state.tab = 'messages'; state.messages = []; state.cursor = null; const generation = ++state.generation; renderRows(); renderInspector(true); const detail = await api.detail({ id, direction: 'older' }); if (state.generation !== generation) return; state.messages = detail.messages; state.cursor = detail.next; state.notice = detail.notice || (detail.skipped ? `${detail.skipped} malformed or oversized records skipped; originals remain intact.` : ''); renderInspector(); const pane = $('#inspector'); pane.scrollTop = pane.scrollHeight; }
+async function selectContext(id) { state.active = id; state.tab = 'messages'; state.messages = []; state.cursor = null; const generation = ++state.generation; renderRows(); renderInspector(true); const detail = await api.detail({ id, direction: 'older' }); if (state.generation !== generation) return; state.messages = detail.messages; state.cursor = detail.next; state.notice = detail.notice || (detail.skipped ? `${detail.skipped} malformed or oversized records skipped; originals remain intact.` : ''); renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.scrollTop = scroll.scrollHeight; }
 function activeContext() { return state.library.contexts.find(c => c.id === state.active); }
 function renderInspector(loading = false) {
   const c = activeContext(); if (!c) return;
-  const pane = $('#inspector'), previousScroll = pane.scrollTop; pane.replaceChildren();
+  const pane = $('#inspector'), previousScroll = pane.querySelector('.inspect-body')?.scrollTop || 0; pane.replaceChildren();
   const head = element('div', 'inspect-head'), top = element('div', 'inspect-top'); top.append(providerLabel(c.provider)); if (c.origin !== 'remote') top.append(button(c.starred ? '★ Starred' : '☆ Star', 'quiet', async () => { updateLibrary(await api.annotate({ id: c.id, starred: !c.starred })); renderInspector(); }));
   head.append(top, element('h2', '', c.title), element('div', 'project-path', c.project || 'Working directory not recorded'));
   const actions = element('div', 'inspect-actions');
@@ -102,17 +102,18 @@ function renderInspector(loading = false) {
   } else actions.append(button('Restore files', 'button', () => operation('Restoring context files…', async () => { const result = await api.restoreContext(c.id); if (result) toast(`${result.count} files restored to ${result.path}`); })));
   if (c.origin === 'remote' && !c.handoff) actions.append(button('⇥ Resume here', 'button', () => resumeHere(c.id)));
   else if (c.origin !== 'remote') actions.append(button('Show file', 'button', () => api.revealContext(c.id)), button('Export', 'button', () => exportContexts([c.id])));
-  head.append(element('p', 'machine-label', `${c.origin === 'remote' ? 'SSH · ' : 'This machine · '}${c.machine || ''}${c.offline ? ' · Offline snapshot' : ''}`)); if (c.handoff) head.append(element('p', 'notice', `Handed off to ${c.handoff.target}. To bring back the latest history, stop the session there and choose Resume here on its SSH copy. Refresh Context locations if that copy is missing. Release handoff only reopens this retained, older copy.`)); if (c.copies?.length) head.append(element('p', 'notice', 'Other copies exist on ' + c.copies.join(', ') + '. Avoid running the same conversation in multiple places.')); head.append(actions); pane.append(head);
-  const tabs = element('div', 'tabs'); for (const [id, title] of [['messages', 'Conversation'], ['files', 'Original files'], ['metadata', 'Details & notes']]) tabs.append(button(title, `tab ${state.tab === id ? 'active' : ''}`, () => { state.tab = id; renderInspector(); if (id === 'messages') pane.scrollTop = pane.scrollHeight; else pane.scrollTop = 0; })); pane.append(tabs);
-  const body = element('div', 'inspect-body'); pane.append(body);
+  head.append(element('p', 'machine-label', `${c.origin === 'remote' ? 'SSH · ' : 'This machine · '}${c.machine || ''}${c.offline ? ' · Offline snapshot' : ''}`)); head.append(actions); pane.append(head);
+  const tabs = element('div', 'tabs'); for (const [id, title] of [['messages', 'Conversation'], ['files', 'Original files'], ['metadata', 'Details & notes']]) tabs.append(button(title, `tab ${state.tab === id ? 'active' : ''}`, () => { state.tab = id; renderInspector(); const scroll = pane.querySelector('.inspect-body'); scroll.scrollTop = id === 'messages' ? scroll.scrollHeight : 0; })); pane.append(tabs);
+  const body = element('div', 'inspect-body'); body.tabIndex = 0; body.setAttribute('role', 'region'); body.setAttribute('aria-label', state.tab === 'messages' ? 'Conversation messages' : 'Context details'); pane.append(body);
   if (loading) { body.append(element('div', 'empty', 'Loading conversation…')); return; }
+  if (c.handoff) body.append(element('p', 'notice', `Handed off to ${c.handoff.target}. To bring back the latest history, stop the session there and choose Resume here on its SSH copy. Refresh Context locations if that copy is missing. Release handoff only reopens this retained, older copy.`)); if (c.copies?.length) body.append(element('p', 'notice', 'Other copies exist on ' + c.copies.join(', ') + '. Avoid running the same conversation in multiple places.'));
   if (state.tab === 'messages') renderMessages(body);
   if (state.tab === 'files') {
     body.append(element('p', '', 'Original files included when you export this context.'));
     api.files({ id: c.id }).then(files => { if (state.active !== c.id || state.tab !== 'files') return; for (const f of files) { const row = element('div', 'file'); row.append(element('code', '', f.relative), element('small', '', bytes(f.size))); body.append(row); } }).catch(e => toast(e.message, true));
   }
   if (state.tab === 'metadata') renderMetadata(body, c);
-  pane.scrollTop = previousScroll;
+  body.scrollTop = previousScroll;
 }
 function renderMessages(body) {
   const controls = element('div', 'detail-controls'), label = element('label'), check = element('input'); check.type = 'checkbox'; check.checked = state.tools; check.onchange = () => { state.tools = check.checked; renderInspector(); }; label.append(check, document.createTextNode('Show tools & system messages')); controls.append(label, element('span', '', `${state.messages.length} loaded`)); body.append(controls);
@@ -124,8 +125,8 @@ function renderMessages(body) {
       if (generation !== state.generation) return;
       state.messages.unshift(...detail.messages); state.cursor = detail.next;
       if (state.tab !== 'messages') return;
-      const pane = $('#inspector'), distanceFromBottom = pane.scrollHeight - pane.scrollTop;
-      renderInspector(); pane.scrollTop = pane.scrollHeight - distanceFromBottom;
+      const previous = $('#inspector .inspect-body'), distanceFromBottom = previous.scrollHeight - previous.scrollTop;
+      renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.scrollTop = scroll.scrollHeight - distanceFromBottom;
     } finally { b.disabled = false; }
   }); older.append(b); body.append(older); }
   const visible = state.messages.filter(m => state.tools || ['user', 'assistant'].includes(m.role));

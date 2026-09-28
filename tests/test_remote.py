@@ -126,11 +126,78 @@ class RemoteTests(unittest.TestCase):
         (self.project / '.env').write_text('fixture-only')
         (self.project / 'link').symlink_to('source.py')
         destination = self.local / 'copy'; destination.mkdir()
+        (destination / 'unrelated.txt').write_text('keep')
         result = Teleport(self.remote).run(self.context['id'], str(destination), True)
-        self.assertEqual((destination / '.env').read_text(), 'fixture-only')
-        self.assertTrue((destination / 'link').is_symlink())
-        self.assertEqual((destination / 'link').read_text(), (self.project / 'source.py').read_text())
+        project = destination / self.project.name
+        self.assertEqual((destination / 'unrelated.txt').read_text(), 'keep')
+        self.assertEqual((project / '.env').read_text(), 'fixture-only')
+        self.assertTrue((project / 'link').is_symlink())
+        self.assertEqual((project / 'link').read_text(), (self.project / 'source.py').read_text())
+        self.assertEqual(self.remote.context(result['id'])['project'], str(project))
+
+    def test_workspace_copy_refuses_existing_child_even_when_empty(self):
+        parent = self.local / 'repos'; parent.mkdir()
+        (parent / self.project.name).mkdir()
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            Teleport(self.remote).run(self.context['id'], str(parent), True)
+        self.assertEqual(list((parent / self.project.name).iterdir()), [])
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
+
+    def test_workspace_contents_are_placed_directly_in_chosen_folder(self):
+        destination = self.local / 'renamed-project'; destination.mkdir()
+        result = Teleport(self.remote).run(self.context['id'], str(destination), True, workspace_layout='contents')
+        self.assertEqual((destination / 'source.py').read_bytes(), (self.project / 'source.py').read_bytes())
+        self.assertFalse((destination / self.project.name).exists())
         self.assertEqual(self.remote.context(result['id'])['project'], str(destination))
+
+    def test_workspace_contents_refuse_nonempty_destination_and_racing_files(self):
+        destination = self.local / 'renamed-project'; destination.mkdir()
+        keep = destination / 'keep.txt'; keep.write_text('keep')
+        with self.assertRaisesRegex(ValueError, 'empty destination'):
+            Teleport(self.remote).run(self.context['id'], str(destination), True, workspace_layout='contents')
+        keep.unlink()
+        def download(endpoint, operation, target):
+            self.download(endpoint, operation, target)
+            if operation['operation'] == 'workspace': keep.write_text('keep')
+        with patch.object(self.remote, 'download', side_effect=download):
+            with self.assertRaisesRegex(ValueError, 'no longer empty'):
+                Teleport(self.remote).run(self.context['id'], str(destination), True, workspace_layout='contents')
+        self.assertEqual(keep.read_text(), 'keep')
+        self.assertFalse((destination / 'source.py').exists())
+
+    def test_workspace_copy_does_not_replace_child_created_during_download(self):
+        parent = self.local / 'repos'; parent.mkdir()
+        def download(endpoint, operation, destination):
+            self.download(endpoint, operation, destination)
+            if operation['operation'] == 'workspace':
+                (parent / self.project.name).mkdir()
+        with patch.object(self.remote, 'download', side_effect=download):
+            with self.assertRaisesRegex(ValueError, 'appeared during the transfer'):
+                Teleport(self.remote).run(self.context['id'], str(parent), True)
+        self.assertEqual(list((parent / self.project.name).iterdir()), [])
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
+
+    def test_workspace_validation_failure_leaves_parent_untouched(self):
+        parent = self.local / 'repos'; parent.mkdir()
+        def download(endpoint, operation, destination):
+            if operation['operation'] == 'workspace':
+                with zipfile.ZipFile(destination, 'w') as archive: archive.writestr('../escape', 'bad')
+            else: self.download(endpoint, operation, destination)
+        with patch.object(self.remote, 'download', side_effect=download):
+            with self.assertRaisesRegex(ValueError, 'Unsafe'):
+                Teleport(self.remote).run(self.context['id'], str(parent), True)
+        self.assertEqual(list(parent.iterdir()), [])
+
+    def test_failed_context_restore_keeps_copied_project_and_explains_recovery(self):
+        parent = self.local / 'repos'; parent.mkdir()
+        with patch.object(self.manager, 'restore', side_effect=ValueError('Restore conflict')):
+            with self.assertRaisesRegex(ValueError, 'Copied workspace files were retained'):
+                Teleport(self.remote).run(self.context['id'], str(parent), True)
+        self.assertEqual((parent / self.project.name / 'source.py').read_bytes(), (self.project / 'source.py').read_bytes())
+        self.remote.scan()
+        self.assertIsNone(self.remote.context(self.context['id'])['handoff'])
 
     def switch_hosts(self):
         self.local, self.host = self.host, self.local

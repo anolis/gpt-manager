@@ -59,7 +59,7 @@ def main():
                 assert resumed.returncode==0 and b'REMOTE_PROVIDER_READY' in resumed.stdout, (resumed.stdout,resumed.stderr)
                 destination=local/'workspace'; destination.mkdir()
                 result=Teleport(remote).run(context['id'],str(destination),True)
-                assert (destination/'hello.txt').read_text()=='fixture workspace'
+                assert (destination/project.name/'hello.txt').read_text()=='fixture workspace'
                 assert remote.context(result['id'])['origin']=='local'
                 blocked=subprocess.run([str(script),*launch['args']],stdin=subprocess.DEVNULL,capture_output=True,timeout=15)
                 assert blocked.returncode != 0 and b'handed off' in blocked.stdout, (blocked.stdout,blocked.stderr)
