@@ -2,7 +2,7 @@
 const api = window.manager;
 const $ = selector => document.querySelector(selector);
 const providers = { codex: 'Codex', claude: 'Claude', gemini: 'Gemini CLI', antigravity: 'Antigravity' };
-const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', host: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, generation: 0, busy: false };
+const state = { library: { contexts: [], locations: [] }, view: 'all', provider: 'all', host: 'all', query: '', selected: new Set(), active: null, tab: 'messages', messages: [], cursor: null, tools: false, compactHeader: true, generation: 0, busy: false };
 const titles = { usage: 'Provider usage', setup: 'AI setup', catchup: 'Catch up', all: 'All contexts', starred: 'Starred', imported: 'Imported contexts', archived: 'Archived contexts', locations: 'Context locations', cloud: 'Cloud sync', transfer: 'Backup & teleport' };
 const descriptions = { usage: 'Your remaining allowance and the next reset, reported by each provider.', setup: 'Install your AI assistant, sign in, and get back to your projects.', catchup: 'Your projects kept moving. Find your place in them again.', all: 'Pick up the thread. Every conversation, in one place.', starred: 'The conversations you want to keep close.', imported: 'Conversations brought over from another manager.', archived: 'Out of the way. Still here when you need them.', locations: 'See local stores and SSH hosts. Resume on the machine that owns the context.', cloud: 'Connect an account. Choose what travels with you.', transfer: 'Your work travels with you. Pack it up and pick it up anywhere.' };
 function element(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
@@ -86,13 +86,40 @@ function renderRows() {
     content.append(title, meta, bottom); row.append(check, content); rows.append(row);
   }
 }
-async function selectContext(id) { state.active = id; state.tab = 'messages'; state.messages = []; state.cursor = null; const generation = ++state.generation; renderRows(); renderInspector(true); const detail = await api.detail({ id, direction: 'older' }); if (state.generation !== generation) return; state.messages = detail.messages; state.cursor = detail.next; state.notice = detail.notice || (detail.skipped ? `${detail.skipped} malformed or oversized records skipped; originals remain intact.` : ''); renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.scrollTop = scroll.scrollHeight; }
+async function selectContext(id) { state.active = id; state.compactHeader = true; state.tab = 'messages'; state.messages = []; state.cursor = null; const generation = ++state.generation; renderRows(); renderInspector(true); const detail = await api.detail({ id, direction: 'older' }); if (state.generation !== generation) return; state.messages = detail.messages; state.cursor = detail.next; state.notice = detail.notice || (detail.skipped ? `${detail.skipped} malformed or oversized records skipped; originals remain intact.` : ''); renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.setScrollPosition(scroll.scrollHeight); }
 function activeContext() { return state.library.contexts.find(c => c.id === state.active); }
+function setInspectorCompact(compact) {
+  const pane = $('#inspector'), body = pane.querySelector('.inspect-body');
+  if (!body || compact === state.compactHeader) return;
+  const top = body.getBoundingClientRect().top, position = body.scrollTop;
+  const atBottom = body.scrollHeight - body.clientHeight - position < 2;
+  state.compactHeader = compact;
+  pane.classList.toggle('compact-header', compact);
+  const toggle = pane.querySelector('.inspector-toggle');
+  toggle.textContent = compact ? 'Show details ▾' : 'Hide details ▴';
+  toggle.setAttribute('aria-expanded', String(!compact));
+  body.setScrollPosition(atBottom ? body.scrollHeight : position + body.getBoundingClientRect().top - top);
+}
+function bindInspectorScroll(body) {
+  let last = body.scrollTop, travel = 0;
+  body.setScrollPosition = position => { body.scrollTop = position; last = body.scrollTop; travel = 0; };
+  body.addEventListener('scroll', () => {
+    if (!body.isConnected) return;
+    const current = body.scrollTop, delta = current - last;
+    last = current;
+    if (!delta) return;
+    travel = Math.sign(travel) === Math.sign(delta) ? travel + delta : delta;
+    if (travel < -18 || (current === 0 && delta < 0)) setInspectorCompact(false);
+    else if (travel > 18 && current > 40) setInspectorCompact(true);
+  }, { passive: true });
+}
 function renderInspector(loading = false) {
   const c = activeContext(); if (!c) return;
-  const pane = $('#inspector'), previousScroll = pane.querySelector('.inspect-body')?.scrollTop || 0; pane.replaceChildren();
+  const pane = $('#inspector'), previousScroll = pane.querySelector('.inspect-body')?.scrollTop || 0; pane.replaceChildren(); pane.classList.toggle('compact-header', state.compactHeader);
   const head = element('div', 'inspect-head'), top = element('div', 'inspect-top'); top.append(providerLabel(c.provider)); if (c.origin !== 'remote') top.append(button(c.starred ? '★ Starred' : '☆ Star', 'quiet', async () => { updateLibrary(await api.annotate({ id: c.id, starred: !c.starred })); renderInspector(); }));
-  head.append(top, element('h2', '', c.title), element('div', 'project-path', c.project || 'Working directory not recorded'));
+  const heading = element('div', 'inspect-heading'), title = element('h2', '', c.title); title.title = c.title;
+  const toggle = button(state.compactHeader ? 'Show details ▾' : 'Hide details ▴', 'quiet inspector-toggle', () => setInspectorCompact(!state.compactHeader)); toggle.setAttribute('aria-expanded', String(!state.compactHeader));
+  heading.append(title, toggle); head.append(top, heading, element('div', 'project-path', c.project || 'Working directory not recorded'));
   const actions = element('div', 'inspect-actions');
   if (c.handoff) {
     const returns = state.library.contexts.filter(other => c.origin === 'local' && other.origin === 'remote' && !other.handoff && !other.offline && other.provider === c.provider && other.sessionId === c.sessionId && (c.handoff.targetMachineId ? other.machineId === c.handoff.targetMachineId : other.machine === c.handoff.target));
@@ -103,8 +130,8 @@ function renderInspector(loading = false) {
   if (c.origin === 'remote' && !c.handoff) actions.append(button('⇥ Resume here', 'button', () => resumeHere(c.id)));
   else if (c.origin !== 'remote') actions.append(button('Show file', 'button', () => api.revealContext(c.id)), button('Export', 'button', () => exportContexts([c.id])));
   head.append(element('p', 'machine-label', `${c.origin === 'remote' ? 'SSH · ' : 'This machine · '}${c.machine || ''}${c.offline ? ' · Offline snapshot' : ''}`)); head.append(actions); pane.append(head);
-  const tabs = element('div', 'tabs'); for (const [id, title] of [['messages', 'Conversation'], ['files', 'Original files'], ['metadata', 'Details & notes']]) tabs.append(button(title, `tab ${state.tab === id ? 'active' : ''}`, () => { state.tab = id; renderInspector(); const scroll = pane.querySelector('.inspect-body'); scroll.scrollTop = id === 'messages' ? scroll.scrollHeight : 0; })); pane.append(tabs);
-  const body = element('div', 'inspect-body'); body.tabIndex = 0; body.setAttribute('role', 'region'); body.setAttribute('aria-label', state.tab === 'messages' ? 'Conversation messages' : 'Context details'); pane.append(body);
+  const tabs = element('div', 'tabs'); for (const [id, title] of [['messages', 'Conversation'], ['files', 'Original files'], ['metadata', 'Details & notes']]) tabs.append(button(title, `tab ${state.tab === id ? 'active' : ''}`, () => { state.tab = id; renderInspector(); const scroll = pane.querySelector('.inspect-body'); scroll.setScrollPosition(id === 'messages' ? scroll.scrollHeight : 0); })); pane.append(tabs);
+  const body = element('div', 'inspect-body'); body.tabIndex = 0; body.setAttribute('role', 'region'); body.setAttribute('aria-label', state.tab === 'messages' ? 'Conversation messages' : 'Context details'); pane.append(body); bindInspectorScroll(body);
   if (loading) { body.append(element('div', 'empty', 'Loading conversation…')); return; }
   if (c.handoff) body.append(element('p', 'notice', `Handed off to ${c.handoff.target}. To bring back the latest history, stop the session there and choose Resume here on its SSH copy. Refresh Context locations if that copy is missing. Release handoff only reopens this retained, older copy.`)); if (c.copies?.length) body.append(element('p', 'notice', 'Other copies exist on ' + c.copies.join(', ') + '. Avoid running the same conversation in multiple places.'));
   if (state.tab === 'messages') renderMessages(body);
@@ -113,7 +140,7 @@ function renderInspector(loading = false) {
     api.files({ id: c.id }).then(files => { if (state.active !== c.id || state.tab !== 'files') return; for (const f of files) { const row = element('div', 'file'); row.append(element('code', '', f.relative), element('small', '', bytes(f.size))); body.append(row); } }).catch(e => toast(e.message, true));
   }
   if (state.tab === 'metadata') renderMetadata(body, c);
-  body.scrollTop = previousScroll;
+  body.setScrollPosition(previousScroll);
 }
 function renderMessages(body) {
   const controls = element('div', 'detail-controls'), label = element('label'), check = element('input'); check.type = 'checkbox'; check.checked = state.tools; check.onchange = () => { state.tools = check.checked; renderInspector(); }; label.append(check, document.createTextNode('Show tools & system messages')); controls.append(label, element('span', '', `${state.messages.length} loaded`)); body.append(controls);
@@ -126,7 +153,7 @@ function renderMessages(body) {
       state.messages.unshift(...detail.messages); state.cursor = detail.next;
       if (state.tab !== 'messages') return;
       const previous = $('#inspector .inspect-body'), distanceFromBottom = previous.scrollHeight - previous.scrollTop;
-      renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.scrollTop = scroll.scrollHeight - distanceFromBottom;
+      renderInspector(); const scroll = $('#inspector .inspect-body'); scroll.setScrollPosition(scroll.scrollHeight - distanceFromBottom);
     } finally { b.disabled = false; }
   }); older.append(b); body.append(older); }
   const visible = state.messages.filter(m => state.tools || ['user', 'assistant'].includes(m.role));

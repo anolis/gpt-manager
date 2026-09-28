@@ -55,3 +55,12 @@
 
 /* Keep conversation actions visible while only the detail pane scrolls. */
 .inspect-head h2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+.inspect-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.inspect-heading h2{flex:1;min-width:0}
+.inspector-toggle{flex:none;font-size:10px;white-space:nowrap}
+.compact-header .inspect-head{padding:10px 16px}
+.compact-header .inspect-top,.compact-header .inspect-head .project-path,.compact-header .inspect-head .machine-label{display:none}
+.compact-header .inspect-heading h2{display:block;margin:0;font-size:13px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.compact-header .inspect-actions{margin-top:6px}
+.inspect-body{overflow-anchor:none}
