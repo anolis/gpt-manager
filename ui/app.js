@@ -241,6 +241,13 @@ function showTerminal(id) {
 api.onTerminalData(({ token, data }) => { for (const t of terminalSessions.values()) if (t.token === token) t.term.write(Uint8Array.from(atob(data), c => c.charCodeAt(0))); });
 api.onTerminalExit(({ token, code }) => { for (const [id, t] of terminalSessions) if (t.token === token) { t.exited = true; if (id.startsWith('setup:')) run(async () => { setupState = await api.setupAuthRefresh({ force: true }); if (state.view === 'setup') renderSetup(); }); t.term.write(`\r\n\x1b[90m[Process exited: ${code}. Close this tab to resume again.]\x1b[0m\r\n`); } if (activeTerminal) showTerminal(activeTerminal); });
 $('#terminal-hide').onclick = () => $('#terminal-dock').classList.add('hidden');
+$('#terminal-expand').onclick = () => {
+  const expanded = $('#terminal-dock').classList.toggle('expanded'), control = $('#terminal-expand');
+  const label = expanded ? 'Restore terminal size' : 'Expand terminal';
+  control.setAttribute('aria-expanded', String(expanded)); control.setAttribute('aria-label', label); control.title = label;
+  control.textContent = expanded ? '↙' : '⛶';
+  requestAnimationFrame(() => { const t = terminalSessions.get(activeTerminal); if (t && !$('#terminal-dock').classList.contains('hidden')) { t.fit.fit(); t.term.focus(); } });
+};
 $('#terminal-close').onclick = () => run(async () => { const t = terminalSessions.get(activeTerminal); if (!t) return; if (!await api.terminalClose(t.token)) return; t.term.dispose(); t.host.remove(); terminalSessions.delete(activeTerminal); activeTerminal = null; const next = terminalSessions.keys().next().value; if (next) showTerminal(next); else $('#terminal-dock').classList.add('hidden'); });
 $('#terminal-reopen').onclick = () => { if (activeTerminal) showTerminal(activeTerminal); else toast('Select a context and choose “Chat here” to start a terminal.'); };
 new ResizeObserver(() => { if (!$('#terminal-dock').classList.contains('hidden')) terminalSessions.get(activeTerminal)?.fit.fit(); }).observe($('#terminal-content'));

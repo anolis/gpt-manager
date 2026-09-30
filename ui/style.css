@@ -64,3 +64,5 @@
 .compact-header .inspect-heading h2{display:block;margin:0;font-size:13px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
 .compact-header .inspect-actions{margin-top:6px}
 .inspect-body{overflow-anchor:none}
+/* Expanded terminals fill the main workspace while keeping navigation available. */
+#terminal-dock.expanded{top:0;height:auto;min-height:0}.terminal-controls{display:flex;flex-shrink:0;align-items:center}.terminal-bar{flex-shrink:0}#terminal-tabs{min-width:0}
